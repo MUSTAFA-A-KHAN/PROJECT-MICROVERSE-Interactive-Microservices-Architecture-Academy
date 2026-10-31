@@ -1,0 +1,172 @@
+# Order Management System — local environment.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# Only the gateway (8080) and the RabbitMQ UI (15672) are published to your
+# machine. Everything else is reachable only inside the "oms" network, by
+# service name (e.g. http://user-service:8081).
+name: order-management
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks: [oms]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-go-healthcheck: &go-healthcheck
+  # Distroless images have no curl: the binary probes itself.
+  test: ["CMD", "/app", "-healthcheck"]
+  interval: 10s
+  timeout: 3s
+  retries: 3
+  start_period: 10s
+
+services:
+  # ---------------------------------------------------------------- edge
+  api-gateway:
+    <<: *service-defaults
+    build: ./api-gateway
+    ports: ["8080:8080"]
+    environment:
+      HTTP_ADDR: ":8080"
+      USER_SERVICE_URL: http://user-service:8081
+      ORDER_SERVICE_URL: http://order-service:8082
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      RATE_LIMIT_BURST: "20"
+      RATE_LIMIT_PER_SECOND: "5"
+    healthcheck: *go-healthcheck
+    depends_on:
+      redis: { condition: service_healthy }
+      user-service: { condition: service_healthy }
+      order-service: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- user service
+  user-service:
+    <<: *service-defaults
+    build: ./user-service
+    environment:
+      HTTP_ADDR: ":8081"
+      DATABASE_URL: postgres://users:${USERS_DB_PASSWORD}@users-db:5432/users?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      ACCESS_TOKEN_TTL: 15m
+    healthcheck: *go-healthcheck
+    depends_on:
+      users-db: { condition: service_healthy }
+      users-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  users-migrate:
+    image: migrate/migrate:v4.18.1
+    networks: [oms]
+    command: ["-path=/migrations", "-database=postgres://users:${USERS_DB_PASSWORD}@users-db:5432/users?sslmode=disable", "up"]
+    volumes: ["./user-service/migrations:/migrations:ro"]
+    depends_on:
+      users-db: { condition: service_healthy }
+    restart: "no"
+
+  users-db:
+    <<: *service-defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: users
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD}
+      POSTGRES_DB: users
+    volumes: [users-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users -d users"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------- order service
+  order-service:
+    <<: *service-defaults
+    build: ./order-service
+    environment:
+      HTTP_ADDR: ":8082"
+      DATABASE_URL: postgres://orders:${ORDERS_DB_PASSWORD}@orders-db:5432/orders?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      USER_SERVICE_URL: http://user-service:8081
+      USER_SERVICE_TIMEOUT: 800ms
+      USER_SERVICE_MAX_ATTEMPTS: "3"
+      OUTBOX_RELAY_INTERVAL: 500ms
+    healthcheck: *go-healthcheck
+    depends_on:
+      orders-db: { condition: service_healthy }
+      orders-migrate: { condition: service_completed_successfully }
+      # No dependency on rabbitmq being healthy: the outbox lets Order Service
+      # accept orders while the broker is down.
+      rabbitmq: { condition: service_started }
+
+  orders-migrate:
+    image: migrate/migrate:v4.18.1
+    networks: [oms]
+    command: ["-path=/migrations", "-database=postgres://orders:${ORDERS_DB_PASSWORD}@orders-db:5432/orders?sslmode=disable", "up"]
+    volumes: ["./order-service/migrations:/migrations:ro"]
+    depends_on:
+      orders-db: { condition: service_healthy }
+    restart: "no"
+
+  orders-db:
+    <<: *service-defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD}
+      POSTGRES_DB: orders
+    volumes: [orders-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------- notifications
+  notification-service:
+    <<: *service-defaults
+    build: ./notification-service
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      REDIS_ADDR: redis:6379
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- infrastructure
+  redis:
+    <<: *service-defaults
+    image: redis:7-alpine
+    # Cache + rate-limit counters only: nothing here must survive a restart.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    <<: *service-defaults
+    image: rabbitmq:3.13-management-alpine
+    ports: ["15672:15672"]   # management UI: http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  oms:
+    driver: bridge
+
+volumes:
+  users-data:
+  orders-data:
+  rabbitmq-data:

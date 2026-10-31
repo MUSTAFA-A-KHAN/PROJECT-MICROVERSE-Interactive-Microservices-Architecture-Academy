@@ -1,0 +1,92 @@
+/* ==========================================================================
+   Microverse — keyframes and motion utilities.
+   Motion is purposeful: it shows data moving, state changing, or focus shifting.
+   ========================================================================== */
+@property --glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes glow-rotate { to { --glow-angle: 360deg; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes dash-flow { to { stroke-dashoffset: -28; } }
+@keyframes dash-flow-rev { to { stroke-dashoffset: 28; } }
+@keyframes ping-soft {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.96) translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes node-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse, var(--blue)) 50%, transparent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+@keyframes beam {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+@keyframes aurora {
+  0% { transform: translate3d(-6%, -4%, 0) rotate(0deg); }
+  50% { transform: translate3d(6%, 4%, 0) rotate(8deg); }
+  100% { transform: translate3d(-6%, -4%, 0) rotate(0deg); }
+}
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes progress-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+
+@layer components {
+  .anim-fade-up { animation: fade-up 0.35s var(--ease) both; }
+  .anim-pop { animation: pop-in 0.22s var(--ease) both; }
+  .anim-shake { animation: shake 0.45s var(--ease) both; }
+
+  .edge-flow { stroke-dasharray: 6 8; animation: dash-flow 1.1s linear infinite; }
+  .edge-flow-rev { stroke-dasharray: 6 8; animation: dash-flow-rev 1.1s linear infinite; }
+
+  /* Ambient background used on the dashboard hero (Aceternity-inspired, very subtle) */
+  .hero-aurora { position: absolute; inset: 0; overflow: hidden; pointer-events: none; border-radius: inherit; }
+  .hero-aurora::before {
+    content: ""; position: absolute; inset: -40%;
+    background:
+      radial-gradient(40% 35% at 30% 30%, color-mix(in srgb, var(--blue) 16%, transparent), transparent 70%),
+      radial-gradient(30% 30% at 70% 60%, color-mix(in srgb, var(--purple) 12%, transparent), transparent 70%),
+      radial-gradient(25% 25% at 55% 20%, color-mix(in srgb, var(--cyan) 10%, transparent), transparent 70%);
+    animation: aurora 18s ease-in-out infinite;
+  }
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .dot-bg {
+    background-image: radial-gradient(color-mix(in srgb, var(--fg) 11%, transparent) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .beam { position: relative; overflow: hidden; }
+  .beam::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 40%;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cyan) 18%, transparent), transparent);
+    animation: beam 2.6s var(--ease) infinite;
+  }
+  .caret::after { content: "▋"; margin-left: 2px; animation: blink 1s steps(1) infinite; color: var(--cyan); }
+  .indeterminate { position: relative; overflow: hidden; height: 2px; background: color-mix(in srgb, var(--blue) 15%, transparent); }
+  .indeterminate::after { content: ""; position: absolute; inset: 0; width: 40%; background: var(--blue); animation: progress-indeterminate 1.1s var(--ease) infinite; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

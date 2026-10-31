@@ -1,0 +1,109 @@
+# Order Service on Kubernetes: Deployment, Service, HPA and PodDisruptionBudget.
+# Apply with:  kubectl apply -f deploy/k8s/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels: { app: order-service, tier: backend }
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: order-service }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # at most one extra pod during a rollout
+      maxUnavailable: 0    # never drop below the desired replica count
+  template:
+    metadata:
+      labels: { app: order-service, tier: backend }
+    spec:
+      terminationGracePeriodSeconds: 30   # > DRAIN_DELAY + SHUTDOWN_TIMEOUT
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: order-service } }
+      containers:
+        - name: order-service
+          image: registry.example.com/oms/order-service:2.3.1   # immutable tag, never :latest
+          ports:
+            - { name: http, containerPort: 8082 }
+          envFrom:
+            - configMapRef: { name: order-service-config }
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: order-service-secrets, key: database-url } }
+            - name: RABBITMQ_URL
+              valueFrom: { secretKeyRef: { name: order-service-secrets, key: rabbitmq-url } }
+            # GOMEMLIMIT makes the GC work harder before hitting the memory limit.
+            # (Go 1.25+ derives GOMAXPROCS from the CPU limit automatically;
+            # setting it explicitly keeps older runtimes from using every node core.)
+            - name: GOMEMLIMIT
+              valueFrom: { resourceFieldRef: { resource: limits.memory, divisor: "1" } }
+            - name: GOMAXPROCS
+              valueFrom: { resourceFieldRef: { resource: limits.cpu, divisor: "1" } }
+          resources:
+            requests: { cpu: 250m, memory: 128Mi }   # what the scheduler reserves
+            limits:   { cpu: "1",  memory: 256Mi }   # memory over limit = OOMKilled
+          startupProbe:        # gives slow starts time before liveness kicks in
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:      # "send me traffic?" — checks the DB pool
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:       # "restart me?" — process only, never dependencies
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service      # DNS: order-service.<namespace>.svc.cluster.local
+  labels: { app: order-service }
+spec:
+  type: ClusterIP
+  selector: { app: order-service }
+  ports:
+    - { name: http, port: 8082, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: order-service }
+  minReplicas: 3
+  maxReplicas: 12          # cap: 12 × 10 DB connections must fit Postgres limits
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 30 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300   # avoid flapping
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service
+spec:
+  minAvailable: 2          # node drains can never take us below 2 pods
+  selector:
+    matchLabels: { app: order-service }

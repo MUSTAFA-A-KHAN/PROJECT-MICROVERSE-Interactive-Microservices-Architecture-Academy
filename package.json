@@ -1,0 +1,16 @@
+{
+  "name": "microverse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Microverse — an interactive academy for production-grade Go microservices.",
+  "scripts": {
+    "dev": "node tools/serve.mjs 5173",
+    "start": "node tools/serve.mjs 5173",
+    "icons": "node tools/build-icons.mjs",
+    "check": "node tools/check-content.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

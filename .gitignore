@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.log
+
+# Local secrets for the reference system
+codebase/order-management/.env
+
+# Go build output
+codebase/order-management/**/bin/

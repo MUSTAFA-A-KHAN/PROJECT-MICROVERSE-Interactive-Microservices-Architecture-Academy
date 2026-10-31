@@ -1,0 +1,40 @@
+# Public entry: only the API Gateway is exposed through the Ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oms-api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.example.com]
+      secretName: oms-api-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port: { number: 8080 }
+---
+# Defence in depth: Order Service accepts traffic only from the gateway.
+# (Requires a CNI that enforces NetworkPolicy, e.g. Calico or Cilium.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: order-service-ingress
+spec:
+  podSelector:
+    matchLabels: { app: order-service }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: api-gateway }
+      ports:
+        - { protocol: TCP, port: 8082 }
