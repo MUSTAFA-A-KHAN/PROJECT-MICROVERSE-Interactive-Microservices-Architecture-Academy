@@ -1,0 +1,93 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+var errUnavailable = errors.New("503 service unavailable")
+
+func noJitter(d time.Duration) time.Duration { return d }
+
+func recorder(slept *[]time.Duration) func(context.Context, time.Duration) error {
+	return func(ctx context.Context, d time.Duration) error {
+		*slept = append(*slept, d)
+		return ctx.Err()
+	}
+}
+
+func main() {
+	const ms = time.Millisecond
+	runTests([]testCase{
+		{"Backoff doubles and caps", func(t *T) {
+			want := []time.Duration{100 * ms, 200 * ms, 400 * ms, 800 * ms, time.Second, time.Second}
+			for i, w := range want {
+				if got := Backoff(i+1, 100*ms, time.Second); got != w {
+					t.Errorf("Backoff(%d) = %v, want %v", i+1, got, w)
+				}
+			}
+		}},
+		{"succeeds on the third attempt with growing waits", func(t *T) {
+			var slept []time.Duration
+			calls := 0
+			err := Retry(context.Background(), 5, 100*ms, time.Second, noJitter, recorder(&slept), func() error {
+				calls++
+				if calls < 3 {
+					return errUnavailable
+				}
+				return nil
+			})
+			if err != nil || calls != 3 {
+				t.Errorf("err=%v calls=%d, want nil and 3 calls", err, calls)
+			}
+			if fmt.Sprint(slept) != fmt.Sprint([]time.Duration{100 * ms, 200 * ms}) {
+				t.Errorf("waited %v, want [100ms 200ms]", slept)
+			}
+		}},
+		{"uses the jitter function", func(t *T) {
+			var slept []time.Duration
+			half := func(d time.Duration) time.Duration { return d / 2 }
+			_ = Retry(context.Background(), 3, 100*ms, time.Second, half, recorder(&slept), func() error { return errUnavailable })
+			if fmt.Sprint(slept) != fmt.Sprint([]time.Duration{50 * ms, 100 * ms}) {
+				t.Errorf("waited %v, want [50ms 100ms] — pass Backoff through jitter", slept)
+			}
+		}},
+		{"never retries a permanent error", func(t *T) {
+			calls := 0
+			var slept []time.Duration
+			err := Retry(context.Background(), 5, 100*ms, time.Second, noJitter, recorder(&slept), func() error {
+				calls++
+				return fmt.Errorf("validate: %w", ErrBadRequest)
+			})
+			if calls != 1 || !errors.Is(err, ErrBadRequest) {
+				t.Errorf("calls=%d err=%v; want 1 call returning the bad-request error", calls, err)
+			}
+		}},
+		{"gives up after maxAttempts with a wrapped error", func(t *T) {
+			calls := 0
+			var slept []time.Duration
+			err := Retry(context.Background(), 3, 10*ms, time.Second, noJitter, recorder(&slept), func() error { calls++; return errUnavailable })
+			if calls != 3 {
+				t.Errorf("calls = %d, want 3", calls)
+			}
+			if !errors.Is(err, errUnavailable) || err == nil || !strings.Contains(err.Error(), "after 3 attempts") {
+				t.Errorf("err = %v; want \"after 3 attempts: ...\" wrapping the last error", err)
+			}
+			if len(slept) != 2 {
+				t.Errorf("slept %d times, want 2 (no sleep after the final attempt)", len(slept))
+			}
+		}},
+		{"stops when the context is cancelled", func(t *T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			calls := 0
+			sleep := func(ctx context.Context, d time.Duration) error { cancel(); return ctx.Err() }
+			err := Retry(ctx, 5, 10*ms, time.Second, noJitter, sleep, func() error { calls++; return errUnavailable })
+			if !errors.Is(err, context.Canceled) || calls != 1 {
+				t.Errorf("err=%v calls=%d; want context.Canceled after 1 call", err, calls)
+			}
+		}},
+	})
+}

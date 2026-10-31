@@ -1,0 +1,85 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"time"
+)
+
+// slow returns a well-behaved dependency: it answers after d, or stops when ctx ends.
+func slow(d time.Duration, answer string, cancelled *atomic.Int32) Fetcher {
+	return func(ctx context.Context) (string, error) {
+		select {
+		case <-time.After(d):
+			return answer, nil
+		case <-ctx.Done():
+			if cancelled != nil {
+				cancelled.Add(1)
+			}
+			return "", ctx.Err()
+		}
+	}
+}
+
+func failing(err error) Fetcher {
+	return func(ctx context.Context) (string, error) { return "", err }
+}
+
+func main() {
+	runTests([]testCase{
+		{"fast fetch returns its result", func(t *T) {
+			v, err := FetchWithTimeout(context.Background(), 200*time.Millisecond, slow(5*time.Millisecond, "ok", nil))
+			if err != nil || v != "ok" {
+				t.Errorf("got (%q, %v), want (\"ok\", nil)", v, err)
+			}
+		}},
+		{"slow fetch hits the deadline", func(t *T) {
+			start := time.Now()
+			_, err := FetchWithTimeout(context.Background(), 30*time.Millisecond, slow(time.Second, "late", nil))
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("err = %v, want context.DeadlineExceeded", err)
+			}
+			if el := time.Since(start); el > 300*time.Millisecond {
+				t.Errorf("took %v — the call should be abandoned at ~30ms", el)
+			}
+		}},
+		{"parent cancellation propagates", func(t *T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+			_, err := FetchWithTimeout(ctx, time.Second, slow(time.Second, "late", nil))
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("err = %v, want context.Canceled", err)
+			}
+		}},
+		{"FirstResponse returns the fastest replica", func(t *T) {
+			start := time.Now()
+			v, err := FirstResponse(context.Background(), []Fetcher{slow(300*time.Millisecond, "slow", nil), slow(20*time.Millisecond, "fast", nil), slow(200*time.Millisecond, "medium", nil)})
+			if err != nil || v != "fast" {
+				t.Errorf("got (%q, %v), want (\"fast\", nil)", v, err)
+			}
+			if el := time.Since(start); el > 150*time.Millisecond {
+				t.Errorf("took %v; replicas must run concurrently", el)
+			}
+		}},
+		{"FirstResponse cancels the losers", func(t *T) {
+			var cancelled atomic.Int32
+			_, _ = FirstResponse(context.Background(), []Fetcher{slow(10*time.Millisecond, "fast", &cancelled), slow(time.Second, "a", &cancelled), slow(time.Second, "b", &cancelled)})
+			time.Sleep(50 * time.Millisecond)
+			if n := cancelled.Load(); n != 2 {
+				t.Errorf("%d slow replicas observed cancellation, want 2", n)
+			}
+		}},
+		{"FirstResponse skips failures and joins errors when all fail", func(t *T) {
+			e1, e2 := errors.New("replica 1 down"), errors.New("replica 2 down")
+			v, err := FirstResponse(context.Background(), []Fetcher{failing(e1), slow(30*time.Millisecond, "ok", nil)})
+			if err != nil || v != "ok" {
+				t.Errorf("one failure should be skipped: got (%q, %v)", v, err)
+			}
+			_, err = FirstResponse(context.Background(), []Fetcher{failing(e1), failing(e2)})
+			if !errors.Is(err, e1) || !errors.Is(err, e2) {
+				t.Errorf("err = %v; it should wrap both replica errors (errors.Join)", err)
+			}
+		}},
+	})
+}

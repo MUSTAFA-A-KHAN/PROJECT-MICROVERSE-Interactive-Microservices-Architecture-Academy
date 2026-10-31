@@ -1,0 +1,53 @@
+package main
+
+import (
+	"errors"
+	"time"
+)
+
+type State int
+
+const (
+	Closed State = iota
+	Open
+	HalfOpen
+)
+
+var ErrOpen = errors.New("circuit breaker is open")
+
+// Breaker protects a dependency:
+//
+//	CLOSED    calls pass; consecutive failures are counted. Threshold consecutive
+//	          failures → OPEN. A success resets the count.
+//	OPEN      Allow returns ErrOpen until Cooldown has passed since opening,
+//	          then the breaker becomes HALF-OPEN.
+//	HALF-OPEN exactly one probe call is allowed at a time (others get ErrOpen).
+//	          Probe succeeds → CLOSED. Probe fails → OPEN again (new cooldown).
+//
+// Now is injected so tests control time. Make it safe for concurrent use.
+type Breaker struct {
+	Threshold int
+	Cooldown  time.Duration
+	Now       func() time.Time
+
+	// TODO: add the fields you need (state, failure count, opened-at time, a mutex…)
+}
+
+// Allow reports whether a call may proceed. Every nil from Allow must be
+// followed by exactly one Record.
+func (b *Breaker) Allow() error {
+	// TODO
+	return nil
+}
+
+// Record reports the outcome of a call that Allow permitted.
+func (b *Breaker) Record(failed bool) {
+	// TODO
+}
+
+// State returns the current state (an OPEN breaker whose cooldown has passed
+// reports HALF-OPEN).
+func (b *Breaker) State() State {
+	// TODO
+	return Closed
+}

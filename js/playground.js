@@ -1,11 +1,15 @@
 /* ==========================================================================
    Microverse — Code Playground.
-   A read-only IDE for the reference Order Management System: file explorer,
-   tabs, syntax highlighting, line numbers, per-file explanations,
-   line-anchored notes and guided request traces across files.
+   An IDE for the reference Order Management System: file explorer, tabs,
+   syntax highlighting, line numbers, per-file explanations, line-anchored
+   notes and guided request traces across files.
 
    The source shown is the real code in codebase/order-management/ (it
    compiles and its tests pass). Nothing is executed in the browser.
+   Edit mode keeps changed .go files as drafts in this browser; "Build & test"
+   asks the local dev server to copy the service to a temporary folder, apply
+   the drafts and run go build / go vet / go test there. Repository files are
+   never written.
    ========================================================================== */
 window.MV = window.MV || {};
 
@@ -17,6 +21,10 @@ window.MV = window.MV || {};
   const SERVICE_COLOR = { 'api-gateway': 'cyan', 'user-service': 'blue', 'order-service': 'purple', 'notification-service': 'green', deploy: 'warn', root: 'muted' };
 
   const codePath = (p) => CB.root + p;
+  const SERVICES = ['api-gateway', 'user-service', 'order-service', 'notification-service'];
+  const editable = (path) => !!path && path.endsWith('.go') && SERVICES.includes(path.split('/')[0]);
+  const drafts = () => MV.store.get().drafts || {};
+  const serviceDrafts = (svc) => Object.entries(drafts()).filter(([p]) => p.startsWith(svc + '/'));
 
   function fileIcon(path) {
     if (path.endsWith('.go')) return path.endsWith('_test.go') ? 'flask-conical' : 'file-code-2';
@@ -100,6 +108,7 @@ window.MV = window.MV || {};
           <div class="pg-pathbar" id="pg-pathbar"></div>
           <div class="pg-code scroll-thin" id="pg-code" data-lenis-prevent tabindex="0" aria-label="Source code"></div>
           <div class="pg-tracebar" id="pg-tracebar" hidden></div>
+          <div class="pg-buildbar scroll-thin" id="pg-buildbar" data-lenis-prevent hidden aria-live="polite"></div>
         </section>
         <aside class="pg-explain scroll-thin" id="pg-explain" data-lenis-prevent aria-label="Explanation"></aside>
         <label class="pg-mobile-pick"><span class="sr-only">Open file</span><select class="select" id="pg-mobile-select">${CB.files.map((f) => `<option value="${esc(f.path)}">${esc(f.path)}</option>`).join('')}</select></label>
@@ -125,7 +134,7 @@ window.MV = window.MV || {};
         });
         dir.files.filter((f) => !q || f.path.toLowerCase().includes(q)).sort((a, b) => a.path.localeCompare(b.path)).forEach((f) => {
           const name = f.path.split('/').pop();
-          html += `<button type="button" role="treeitem" class="pg-node pg-file${f.path === this.active ? ' is-active' : ''}" data-file="${esc(f.path)}" style="--d:${depth}" title="${esc(f.summary)}">${icon(fileIcon(f.path), '', 14)}<span class="truncate">${esc(name)}</span></button>`;
+          html += `<button type="button" role="treeitem" class="pg-node pg-file${f.path === this.active ? ' is-active' : ''}" data-file="${esc(f.path)}" style="--d:${depth}" title="${esc(f.summary)}">${icon(fileIcon(f.path), '', 14)}<span class="truncate">${esc(name)}</span>${drafts()[f.path] != null ? '<span class="pg-dot" title="Edited in this browser"></span>' : ''}</button>`;
         });
         return html;
       };
@@ -139,7 +148,7 @@ window.MV = window.MV || {};
         const name = p.split('/').pop();
         const svc = byPath.get(p).service;
         return `<div class="pg-tab${p === this.active ? ' is-active' : ''}" role="tab" aria-selected="${p === this.active}">
-          <button type="button" class="pg-tab-open" data-tab="${esc(p)}" title="${esc(p)}">${icon(fileIcon(p), '', 13)}<span>${esc(name)}</span><span class="pg-tab-svc" style="color:var(--${SERVICE_COLOR[svc] || 'muted'})">${esc(svc === 'root' ? '' : svc.replace('-service', ''))}</span></button>
+          <button type="button" class="pg-tab-open" data-tab="${esc(p)}" title="${esc(p)}">${icon(fileIcon(p), '', 13)}<span>${esc(name)}</span>${drafts()[p] != null ? '<span class="pg-dot" title="Edited"></span>' : ''}<span class="pg-tab-svc" style="color:var(--${SERVICE_COLOR[svc] || 'muted'})">${esc(svc === 'root' ? '' : svc.replace('-service', ''))}</span></button>
           <button type="button" class="pg-tab-close" data-close-tab="${esc(p)}" aria-label="Close ${esc(name)}">${icon('x', '', 12)}</button></div>`;
       }).join('');
       const act = $('.pg-tab.is-active', this.view);
@@ -163,12 +172,10 @@ window.MV = window.MV || {};
       this.renderTree();
       $('#pg-mobile-select', this.view).value = path;
 
-      const bm = MV.store.isBookmarked('file:' + path);
-      $('#pg-pathbar', this.view).innerHTML = `<div class="flex items-center gap-1.5 min-w-0 mono text-[12px] text-mutedc">${path.split('/').map((p, i, a) => `<span class="${i === a.length - 1 ? 'text-fg2' : ''}">${esc(p)}</span>`).join(icon('chevron-right', '', 11))}</div>
-        <span class="badge badge-sim ml-auto" data-tip="This is the real source from codebase/order-management. It is displayed, not executed — run it with docker compose up.">${icon('eye', '', 12)}Static source</span>
-        <button class="btn btn-ghost btn-sm" type="button" data-pg-bm aria-pressed="${bm}">${icon(bm ? 'bookmark-check' : 'bookmark')}<span class="hide-sm">${bm ? 'Saved' : 'Save'}</span></button>
-        <button class="btn btn-ghost btn-sm" type="button" data-pg-copy>${icon('copy')}<span class="hide-sm">Copy</span></button>`;
+      this.disposeEditor();
+      this.renderPathbar();
       const code = $('#pg-code', this.view);
+      code.classList.remove('is-editing');
       code.innerHTML = `<div class="p-4">${MV.ui.skeleton(14)}</div>`;
       this.renderExplain(f, null);
 
@@ -189,12 +196,144 @@ window.MV = window.MV || {};
         return { ...n, line: loc ? loc.start : null };
       });
       this.notes = located;
+      this.renderExplain(f, located);
+      if (this.editMode && editable(path)) { this.mountEditor(path, text, highlight); return; }
       const hl = highlight ? `${highlight.start}-${highlight.end}` : '';
       code.innerHTML = MV.ui.codeBlock(text, { lang: f.lang, title: path, highlight: hl, annotations: ann, maxHeight: 'none' });
-      this.renderExplain(f, located);
       if (highlight) this.scrollToLine(highlight.start, true);
       else code.scrollTop = 0;
       MV.store.pushRecent({ route: `#/playground?file=${encodeURIComponent(path)}`, title: path.split('/').pop(), kind: 'Source file' });
+    }
+
+    /* ---------- edit mode ---------- */
+    renderPathbar() {
+      const path = this.active;
+      const bm = MV.store.isBookmarked('file:' + path);
+      const canEdit = editable(path);
+      const editing = this.editMode && canEdit;
+      const hasDraft = drafts()[path] != null;
+      const svc = path.split('/')[0];
+      const crumbs = `<div class="pg-crumbs flex items-center gap-1.5 min-w-0 mono text-[12px] text-mutedc">${path.split('/').map((p, i, a) => `<span class="${i === a.length - 1 ? 'text-fg2' : ''}">${esc(p)}</span>`).join(icon('chevron-right', '', 11))}</div>`;
+      $('#pg-pathbar', this.view).innerHTML = editing
+        ? `${crumbs}
+          <span class="badge badge-warn ml-auto" data-tip="Your edits are saved in this browser only. Build & test compiles a temporary copy of ${esc(svc)}; files in codebase/ are never modified.">${icon('pencil', '', 12)}${hasDraft ? 'Edited copy' : 'Editing a copy'}</span>
+          <button class="btn btn-sm btn-primary" type="button" data-pg-build data-tip="go build, go vet and go test on a temporary copy (Ctrl+Enter)">${icon('hammer')}<span class="hide-sm">Build &amp; test</span></button>
+          ${hasDraft ? `<button class="btn btn-ghost btn-sm btn-icon" type="button" data-pg-revert aria-label="Revert this file" data-tip="Revert this file">${icon('undo-2')}</button>` : ''}
+          <button class="btn btn-ghost btn-sm btn-icon" type="button" data-pg-copy aria-label="Copy file" data-tip="Copy file">${icon('copy')}</button>
+          <button class="btn btn-sm" type="button" data-pg-edit>${icon('check')}Done</button>`
+        : `${crumbs}
+          <span class="badge badge-sim ml-auto" data-tip="This is the real source from codebase/order-management. It is displayed, not executed — run it with docker compose up.">${icon('eye', '', 12)}Static source</span>
+          <button class="btn btn-ghost btn-sm" type="button" data-pg-bm aria-pressed="${bm}">${icon(bm ? 'bookmark-check' : 'bookmark')}<span class="hide-sm">${bm ? 'Saved' : 'Save'}</span></button>
+          <button class="btn btn-ghost btn-sm" type="button" data-pg-copy>${icon('copy')}<span class="hide-sm">Copy</span></button>
+          ${canEdit ? `<button class="btn btn-sm" type="button" data-pg-edit data-tip="Change this file and build the service with your edits">${icon('pencil')}${hasDraft ? 'Edit (changed)' : 'Edit'}</button>` : ''}`;
+    }
+
+    mountEditor(path, original, highlight) {
+      const code = $('#pg-code', this.view);
+      code.classList.add('is-editing');
+      code.innerHTML = '<div class="pg-edit-host"></div>';
+      const draft = drafts()[path];
+      let saveT;
+      const save = (v) => {
+        const had = drafts()[path] != null;
+        MV.store.saveDraft(path, v === original ? null : v);
+        if (had !== (drafts()[path] != null)) { this.renderPathbar(); this.renderTabs(); this.renderTree(); }
+      };
+      this.editor = new MV.Editor($('.pg-edit-host', code), {
+        value: draft != null ? draft : original, lang: 'go', label: `Edit ${path}`,
+        onChange: (v) => { clearTimeout(saveT); saveT = setTimeout(() => save(v), 400); },
+        onRun: () => this.buildService(),
+        onSave: () => { clearTimeout(saveT); save(this.editor.value); toast('Draft saved in this browser', { duration: 1400 }); },
+      });
+      this.original = original;
+      this.flushDraft = () => { clearTimeout(saveT); if (this.editor) MV.store.saveDraft(path, this.editor.value === original ? null : this.editor.value); };
+      this.applyBuildMarkers();
+      if (highlight) this.editor.revealLine(highlight.start);
+    }
+
+    disposeEditor() {
+      if (!this.editor) return;
+      this.flushDraft && this.flushDraft();
+      this.editor.destroy();
+      this.editor = null;
+    }
+
+    toggleEdit() {
+      this.editMode = !this.editMode;
+      this.disposeEditor();
+      this.renderTabs();
+      this.renderTree();
+      this.open(this.active, { keepTrace: !!this.trace });
+    }
+
+    async revertFile() {
+      const ok = await MV.ui.confirm({ title: 'Revert your edits to this file?', message: 'The draft saved in this browser is discarded and the original source is restored.', confirmText: 'Revert', danger: true });
+      if (!ok) return;
+      if (this.editor) this.editor.setValue(this.original, { undoable: true });
+      MV.store.saveDraft(this.active, null);
+      this.renderPathbar(); this.renderTabs(); this.renderTree();
+    }
+
+    async buildService() {
+      if (this.building || !editable(this.active)) return;
+      const svc = this.active.split('/')[0];
+      this.flushDraft && this.flushDraft();
+      const inf = await MV.runner.info();
+      const bar = $('#pg-buildbar', this.view);
+      bar.hidden = false;
+      if (!inf.api || !inf.local.available) {
+        bar.innerHTML = `${this.buildHead(svc, serviceDrafts(svc).length)}<p class="pg-build-note">${!inf.api
+          ? 'Building needs the Microverse dev server (<span class="mono">npm run dev</span>). Your edits are saved in this browser in the meantime.'
+          : 'Building the services needs Go installed on this machine: the Go Playground cannot download Gin, pgx and the other modules these services use.'}</p>`;
+        return;
+      }
+      const edits = Object.fromEntries(serviceDrafts(svc).map(([p, c]) => [p.slice(svc.length + 1), c]));
+      const n = Object.keys(edits).length;
+      this.building = true;
+      const steps = ['go build ./...', 'go vet ./...', 'go test -count=1 ./...'];
+      bar.innerHTML = `${this.buildHead(svc, n)}<ol class="pg-build-steps"><li class="is-run"><span class="spinner"></span><span class="mono">${steps.join(' && ')}</span><span class="text-mutedc">compiling a temporary copy…</span></li></ol>`;
+      let r;
+      try { r = await MV.runner.checkService(svc, edits); } catch (e) { r = { error: e.message }; }
+      this.building = false;
+      if (!bar.isConnected) return;
+      this.buildResult = { svc, ...r };
+      bar.innerHTML = `${this.buildHead(svc, n, r)}${r.error ? `<p class="pg-build-note is-bad">${esc(r.error)}</p>` : `<ol class="pg-build-steps">${steps.map((c, i) => {
+        const st = r.steps[i];
+        if (!st) return `<li class="is-skip">${icon('circle-minus', '', 14)}<span class="mono">${c}</span><span class="text-mutedc">skipped</span></li>`;
+        const out = st.output ? `<pre class="pg-build-out">${this.linkOutput(svc, st.output)}</pre>` : '';
+        return `<li class="${st.ok ? 'is-ok' : 'is-bad'}">${icon(st.ok ? 'circle-check' : 'circle-x', '', 14)}<span class="mono">${esc(st.cmd)}</span><span class="text-mutedc mono">${(st.durationMs / 1000).toFixed(1)}s${st.timedOut ? ' · timed out' : ''}</span>${out}</li>`;
+      }).join('')}</ol>`}`;
+      this.applyBuildMarkers();
+      if (!r.error) {
+        const failed = r.steps.find((st) => !st.ok);
+        toast(r.ok ? `${svc} builds and all tests pass` : `${svc}: ${failed ? failed.cmd.split(' ').slice(0, 2).join(' ') : 'build'} failed`, { type: r.ok ? 'success' : 'error', desc: r.ok ? 'Built from a temporary copy with your edits.' : 'See the build panel under the editor.' });
+      }
+    }
+
+    buildHead(svc, n, r) {
+      const state = !r ? '' : r.error ? `<span class="badge badge-err">${icon('circle-x', '', 12)}Error</span>` : r.ok ? `<span class="badge badge-green">${icon('circle-check', '', 12)}Passed</span>` : `<span class="badge badge-err">${icon('circle-x', '', 12)}Failed</span>`;
+      return `<div class="pg-build-head">${icon('hammer', '', 14)}<strong>${esc(svc)}</strong><span class="text-mutedc text-[12px]">temporary copy · ${n} edited file${n === 1 ? '' : 's'} · Go toolchain on this machine</span>${state}<button class="btn btn-ghost btn-sm btn-icon ml-auto" type="button" data-pg-build-close aria-label="Close build results">${icon('x')}</button></div>`;
+    }
+
+    /** Turn "internal/x/y.go:12:5" in go output into links that open the file at that line. */
+    linkOutput(svc, text) {
+      return esc(text).replace(/((?:\.\/)?([\w./-]+\.go)):(\d+)(?::(\d+))?/g, (m, _f, rel, line) => {
+        const p = `${svc}/${rel.replace(/^\.\//, '')}`;
+        return byPath.has(p) ? `<button type="button" class="cl-jump" data-build-jump="${esc(p)}" data-line="${line}">${m}</button>` : m;
+      });
+    }
+
+    applyBuildMarkers() {
+      const r = this.buildResult;
+      if (!this.editor || !r || !r.steps || !this.active.startsWith(r.svc + '/')) return;
+      const rel = this.active.slice(r.svc.length + 1);
+      const marks = [];
+      r.steps.filter((st) => !st.ok).forEach((st) => {
+        const re = /(?:^|\s)(?:\.\/)?([\w./-]+\.go):(\d+)(?::(\d+))?:\s*(.+)/gm;
+        let m;
+        while ((m = re.exec(st.output))) if (m[1] === rel) marks.push({ line: +m[2], col: +(m[3] || 1), message: m[4] });
+      });
+      this.editor.setMarkers(marks);
     }
 
     scrollToLine(n, center) {
@@ -344,8 +483,20 @@ window.MV = window.MV || {};
           this.flashLine(+n);
           return;
         }
+        if (t.closest('[data-pg-edit]')) { this.toggleEdit(); return; }
+        if (t.closest('[data-pg-build]')) { this.buildService(); return; }
+        if (t.closest('[data-pg-revert]')) { this.revertFile(); return; }
+        if (t.closest('[data-pg-build-close]')) { $('#pg-buildbar', v).hidden = true; return; }
+        const bj = t.closest('[data-build-jump]');
+        if (bj) {
+          const line = +bj.dataset.line;
+          if (bj.dataset.buildJump !== this.active) await this.open(bj.dataset.buildJump);
+          if (this.editor) this.editor.revealLine(line);
+          else { this.scrollToLine(line, true); this.flashLine(line); }
+          return;
+        }
         if (t.closest('[data-pg-copy]')) {
-          const ok = await MV.ui.copyText(this.text || '');
+          const ok = await MV.ui.copyText(this.editor ? this.editor.value : (this.text || ''));
           toast(ok ? 'File copied' : 'Copy failed', { type: ok ? 'success' : 'error', duration: 1500 });
           return;
         }
@@ -369,7 +520,7 @@ window.MV = window.MV || {};
 
   function render(view, query, nav) {
     const pg = new Playground(view, query || {}, nav);
-    MV.router.onLeave(() => { pg.disposed = true; });
+    MV.router.onLeave(() => { pg.disposed = true; pg.disposeEditor(); });
   }
 
   MV.playground = { render, codePath, locate };

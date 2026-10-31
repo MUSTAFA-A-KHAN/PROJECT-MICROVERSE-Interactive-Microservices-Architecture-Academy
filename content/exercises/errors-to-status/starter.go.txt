@@ -1,0 +1,41 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// Domain errors returned by the order service.
+var (
+	ErrNotFound          = errors.New("order not found")
+	ErrInvalidTransition = errors.New("invalid status transition")
+)
+
+// ValidationError carries the field that failed validation.
+type ValidationError struct {
+	Field  string
+	Reason string
+}
+
+func (e *ValidationError) Error() string { return fmt.Sprintf("%s: %s", e.Field, e.Reason) }
+
+// FindOrder pretends to look an order up; in this exercise it never exists.
+// Return an error that WRAPS ErrNotFound and mentions the id,
+// for example: "find order 42: order not found".
+func FindOrder(id int) error {
+	// TODO: wrap ErrNotFound with fmt.Errorf and %w
+	return nil
+}
+
+// StatusFor maps an error to the HTTP status code a handler should send:
+//
+//	nil                                → 200
+//	wraps ErrNotFound                  → 404
+//	wraps ErrInvalidTransition         → 409
+//	a *ValidationError anywhere in it  → 422
+//	anything else                      → 500
+func StatusFor(err error) int {
+	// TODO: use errors.Is and errors.As — never compare error strings
+	return http.StatusOK
+}

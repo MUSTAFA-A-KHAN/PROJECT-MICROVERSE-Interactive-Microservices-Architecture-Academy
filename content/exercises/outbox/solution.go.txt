@@ -1,0 +1,46 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+type OrderCreated struct {
+	OrderID    string `json:"order_id"`
+	UserID     int64  `json:"user_id"`
+	TotalCents int64  `json:"total_cents"`
+}
+
+type Publisher func(topic, payload string) error
+
+func CreateOrder(db *DB, o Order) error {
+	payload, err := json.Marshal(OrderCreated{OrderID: o.ID, UserID: o.UserID, TotalCents: o.TotalCents})
+	if err != nil {
+		return fmt.Errorf("encode event: %w", err)
+	}
+	tx := db.Begin()
+	defer tx.Rollback() // no-op once committed
+	if err := tx.InsertOrder(o); err != nil {
+		return fmt.Errorf("create order %s: %w", o.ID, err)
+	}
+	if err := tx.InsertOutbox("order.created", string(payload)); err != nil {
+		return fmt.Errorf("create order %s: %w", o.ID, err)
+	}
+	return tx.Commit()
+}
+
+func PublishPending(db *DB, batch int, publish Publisher) (int, error) {
+	n := 0
+	for _, r := range db.Pending(batch) {
+		if err := publish(r.Topic, r.Payload); err != nil {
+			return n, fmt.Errorf("publish outbox row %d: %w", r.ID, err)
+		}
+		// A crash right here republishes the row next time: at-least-once
+		// delivery, which is why consumers must be idempotent.
+		if err := db.MarkPublished(r.ID); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}

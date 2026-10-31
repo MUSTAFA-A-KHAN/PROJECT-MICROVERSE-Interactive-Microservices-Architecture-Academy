@@ -1,0 +1,47 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+type Fetcher func(ctx context.Context) (string, error)
+
+func FetchWithTimeout(ctx context.Context, timeout time.Duration, fetch Fetcher) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout) // earlier of parent deadline and now+timeout
+	defer cancel()                                   // release the timer even on success
+	return fetch(ctx)
+}
+
+func FirstResponse(ctx context.Context, replicas []Fetcher) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // cancels the losers once we return
+
+	type result struct {
+		val string
+		err error
+	}
+	// Buffered so late goroutines can always send and exit — no leak.
+	results := make(chan result, len(replicas))
+	for _, r := range replicas {
+		go func(f Fetcher) {
+			v, err := f(ctx)
+			results <- result{v, err}
+		}(r)
+	}
+
+	var errs []error
+	for range replicas {
+		select {
+		case r := <-results:
+			if r.err == nil {
+				return r.val, nil
+			}
+			errs = append(errs, r.err)
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	return "", errors.Join(errs...)
+}

@@ -1,0 +1,45 @@
+package main
+
+import (
+	"net/http"
+)
+
+type Middleware func(http.Handler) http.Handler
+
+func Chain(h http.Handler, mws ...Middleware) http.Handler {
+	// Wrap from the inside out so mws[0] ends up outermost.
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return h
+}
+
+func RequestID(newID func() string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := r.Header.Get("X-Request-ID")
+			if id == "" {
+				id = newID()
+				r.Header.Set("X-Request-ID", id)
+			}
+			w.Header().Set("X-Request-ID", id)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func Recover(logf func(format string, args ...any)) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if v := recover(); v != nil {
+					logf("panic serving %s %s: %v", r.Method, r.URL.Path, v)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error":"internal"}`))
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}

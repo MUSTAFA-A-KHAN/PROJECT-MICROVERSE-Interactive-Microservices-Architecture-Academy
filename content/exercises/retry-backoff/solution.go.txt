@@ -1,0 +1,46 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+var ErrBadRequest = errors.New("bad request")
+
+func Backoff(attempt int, base, max time.Duration) time.Duration {
+	d := base
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= max {
+			return max
+		}
+	}
+	return min(d, max)
+}
+
+func Retry(ctx context.Context, maxAttempts int, base, max time.Duration,
+	jitter func(time.Duration) time.Duration,
+	sleep func(context.Context, time.Duration) error,
+	op func() error) error {
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr // the caller already gave up
+		}
+		if err = op(); err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrBadRequest) {
+			return err // permanent: retrying only adds load
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		if serr := sleep(ctx, jitter(Backoff(attempt, base, max))); serr != nil {
+			return serr
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", maxAttempts, err)
+}

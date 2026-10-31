@@ -1,0 +1,54 @@
+// A Gin-free JSON handler, exercised with net/http/httptest — no network needed.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+)
+
+type createOrder struct {
+	UserID int64 `json:"user_id"`
+	Items  []struct {
+		SKU string `json:"sku"`
+		Qty int    `json:"qty"`
+	} `json:"items"`
+}
+
+func ordersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req createOrder
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"title": "invalid body", "detail": err.Error()})
+		return
+	}
+	if len(req.Items) == 0 {
+		http.Error(w, "an order needs at least one item", http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"id": "ord_1", "status": "PENDING", "items": len(req.Items)})
+}
+
+func main() {
+	bodies := []string{
+		`{"user_id": 7, "items": [{"sku": "BOOK-1", "qty": 2}]}`,
+		`{"user_id": 7, "items": []}`,
+		`{"user_id": 7, "coupon": "FREE"}`,
+	}
+	for _, b := range bodies {
+		rec := httptest.NewRecorder()
+		ordersHandler(rec, httptest.NewRequest(http.MethodPost, "/v1/orders", strings.NewReader(b)))
+		fmt.Printf("%d  %s", rec.Code, rec.Body.String())
+	}
+}

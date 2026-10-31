@@ -1,0 +1,51 @@
+package main
+
+import (
+	"time"
+)
+
+// Bucket is a token-bucket rate limiter: it holds at most Capacity tokens and
+// refills at Rate tokens per second. Each request spends one token; with no
+// token left the request is rejected (the gateway answers 429).
+//
+// Now is injected so the tests control time. Make it safe for concurrent use.
+type Bucket struct {
+	Capacity float64
+	Rate     float64 // tokens per second
+	Now      func() time.Time
+
+	// TODO: add fields (current tokens, last refill time, a mutex…)
+}
+
+// NewBucket returns a bucket that starts full.
+func NewBucket(capacity, rate float64, now func() time.Time) *Bucket {
+	return &Bucket{Capacity: capacity, Rate: rate, Now: now}
+}
+
+// Allow spends one token if available and reports whether it did.
+func (b *Bucket) Allow() bool {
+	// TODO: refill based on elapsed time (never above Capacity), then spend.
+	return true
+}
+
+// RetryAfter reports how long until one token will be available (0 if one is
+// available now). The gateway puts it in the Retry-After header.
+func (b *Bucket) RetryAfter() time.Duration {
+	// TODO
+	return 0
+}
+
+// Limiter keeps one bucket per key (client ID, API key, IP…).
+type Limiter struct {
+	Capacity float64
+	Rate     float64
+	Now      func() time.Time
+
+	// TODO: a map of buckets guarded by a mutex
+}
+
+// Allow applies the per-key bucket, creating a full one on first use.
+func (l *Limiter) Allow(key string) bool {
+	// TODO
+	return true
+}

@@ -1,0 +1,59 @@
+package main
+
+import (
+	"errors"
+	"strings"
+)
+
+func main() {
+	runTests([]testCase{
+		{"allowed transitions", func(t *T) {
+			for _, p := range [][2]Status{{Pending, Confirmed}, {Pending, Cancelled}, {Confirmed, Shipped}, {Confirmed, Cancelled}, {Shipped, Delivered}} {
+				if !CanTransition(p[0], p[1]) {
+					t.Errorf("%s → %s should be allowed", p[0], p[1])
+				}
+			}
+		}},
+		{"illegal transitions", func(t *T) {
+			for _, p := range [][2]Status{{Shipped, Cancelled}, {Delivered, Pending}, {Cancelled, Confirmed}, {Pending, Shipped}, {Pending, Delivered}} {
+				if CanTransition(p[0], p[1]) {
+					t.Errorf("%s → %s must be rejected", p[0], p[1])
+				}
+			}
+		}},
+		{"Transition applies a legal move and bumps the version", func(t *T) {
+			o := &Order{ID: 1, Status: Pending, Version: 1}
+			if err := Transition(o, Confirmed); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if o.Status != Confirmed || o.Version != 2 {
+				t.Errorf("got status=%s version=%d, want CONFIRMED version=2", o.Status, o.Version)
+			}
+		}},
+		{"illegal move returns a wrapped error and changes nothing", func(t *T) {
+			o := &Order{ID: 2, Status: Shipped, Version: 5}
+			err := Transition(o, Cancelled)
+			if !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("want an error wrapping ErrInvalidTransition, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "SHIPPED") || !strings.Contains(err.Error(), "CANCELLED") {
+				t.Errorf("error %q should mention both statuses", err)
+			}
+			if o.Status != Shipped || o.Version != 5 {
+				t.Errorf("order changed to %s v%d; it must stay SHIPPED v5", o.Status, o.Version)
+			}
+		}},
+		{"cancelling twice is idempotent", func(t *T) {
+			o := &Order{ID: 3, Status: Pending, Version: 1}
+			if err := Transition(o, Cancelled); err != nil {
+				t.Fatalf("first cancel: %v", err)
+			}
+			if err := Transition(o, Cancelled); err != nil {
+				t.Errorf("second cancel should be a no-op, got %v", err)
+			}
+			if o.Version != 2 {
+				t.Errorf("version = %d, want 2 (no bump for a no-op)", o.Version)
+			}
+		}},
+	})
+}

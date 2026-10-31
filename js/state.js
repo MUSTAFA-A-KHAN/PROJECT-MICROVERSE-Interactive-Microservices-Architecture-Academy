@@ -33,6 +33,8 @@ window.MV = window.MV || {};
       playground: { tabs: [], active: null },
       assessment: null,   // { at, answers: { qid: chosenIndex }, score, total, weak: [conceptIds] }
       checklists: {},     // lessonKey -> [checked item indexes]
+      exercises: {},      // exerciseId -> { code, runs, best: { passed, total }, solved, solvedAt, hints, sawSolution, at }
+      drafts: {},         // Code Playground edit mode: 'service/path.go' -> edited source
     };
   }
 
@@ -143,6 +145,38 @@ window.MV = window.MV || {};
       c.at = Date.now();
       state.challenges[id] = c;
       commit({ type: 'challenge', id });
+    },
+
+    /* ----- Coding exercises ----- */
+    /** Autosave the learner's code. Persists without notifying listeners (it runs while typing). */
+    saveExerciseCode(id, code) {
+      const e = state.exercises[id] || { runs: 0 };
+      e.code = code;
+      e.at = Date.now();
+      state.exercises[id] = e;
+      persist();
+    },
+    recordExercise(id, data) {
+      const e = state.exercises[id] || { runs: 0 };
+      Object.assign(e, data);
+      e.at = Date.now();
+      state.exercises[id] = e;
+      commit({ type: 'exercise', id });
+    },
+    /** Record a test run; an exercise counts as solved the first time every test passes. */
+    recordExerciseRun(id, passed, total) {
+      const e = state.exercises[id] || { runs: 0 };
+      e.runs = (e.runs || 0) + 1;
+      if (total && (!e.best || passed / total >= e.best.passed / e.best.total)) e.best = { passed, total };
+      if (total && passed === total && !e.solved) { e.solved = true; e.solvedAt = Date.now(); }
+      e.at = Date.now();
+      state.exercises[id] = e;
+      commit({ type: 'exercise', id });
+      return e;
+    },
+    saveDraft(path, code) {
+      if (code == null) delete state.drafts[path]; else state.drafts[path] = code;
+      persist();
     },
 
     /* ----- Bootcamp ----- */

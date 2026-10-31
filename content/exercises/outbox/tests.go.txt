@@ -1,0 +1,120 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+var errBrokerDown = errors.New("broker unavailable")
+
+type broker struct {
+	sent   []string
+	failAt int // fail the Nth publish (1-based); 0 = never
+	calls  int
+}
+
+func (b *broker) publish(topic, payload string) error {
+	b.calls++
+	if b.failAt == b.calls {
+		return errBrokerDown
+	}
+	var ev map[string]any
+	json.Unmarshal([]byte(payload), &ev)
+	b.sent = append(b.sent, fmt.Sprint(ev["order_id"]))
+	return nil
+}
+
+func seed(db *DB, ids ...string) {
+	for _, id := range ids {
+		if err := CreateOrder(db, Order{ID: id, UserID: 7, TotalCents: 1999}); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func main() {
+	runTests([]testCase{
+		{"order and event are written together", func(t *T) {
+			db := NewDB()
+			if err := CreateOrder(db, Order{ID: "ord_1", UserID: 7, TotalCents: 2500}); err != nil {
+				t.Fatalf("CreateOrder: %v", err)
+			}
+			if _, ok := db.Order("ord_1"); !ok {
+				t.Errorf("order not saved")
+			}
+			rows := db.Outbox()
+			if len(rows) != 1 || rows[0].Topic != "order.created" {
+				t.Fatalf("outbox = %+v, want one order.created row", rows)
+			}
+			var ev OrderCreated
+			if err := json.Unmarshal([]byte(rows[0].Payload), &ev); err != nil || ev.OrderID != "ord_1" || ev.TotalCents != 2500 {
+				t.Errorf("payload %s doesn't describe the order", rows[0].Payload)
+			}
+		}},
+		{"outbox insert fails: the order is not saved either", func(t *T) {
+			db := NewDB()
+			db.FailOutboxInsert = true
+			err := CreateOrder(db, Order{ID: "ord_1"})
+			if !errors.Is(err, ErrInjected) {
+				t.Errorf("err = %v, want the insert error", err)
+			}
+			if _, ok := db.Order("ord_1"); ok {
+				t.Errorf("order was saved without its event — the dual-write bug")
+			}
+		}},
+		{"commit fails: nothing is written and no tx leaks", func(t *T) {
+			db := NewDB()
+			db.FailCommit = true
+			if err := CreateOrder(db, Order{ID: "ord_1"}); err == nil {
+				t.Errorf("expected the commit error")
+			}
+			if _, ok := db.Order("ord_1"); ok || len(db.Outbox()) != 0 {
+				t.Errorf("writes became visible despite the failed commit")
+			}
+			db2 := NewDB()
+			db2.FailOutboxInsert = true
+			CreateOrder(db2, Order{ID: "ord_2"})
+			if n := db2.OpenTx(); n != 0 {
+				t.Errorf("%d transaction(s) left open after a failed insert — defer tx.Rollback()", n)
+			}
+		}},
+		{"relay publishes in order and marks rows", func(t *T) {
+			db := NewDB()
+			seed(db, "a", "b", "c")
+			b := &broker{}
+			n, err := PublishPending(db, 10, b.publish)
+			if err != nil || n != 3 || strings.Join(b.sent, ",") != "a,b,c" {
+				t.Errorf("got n=%d err=%v sent=%v, want 3, nil, [a b c]", n, err, b.sent)
+			}
+			if n, _ := PublishPending(db, 10, b.publish); n != 0 {
+				t.Errorf("second run republished %d rows, want 0", n)
+			}
+		}},
+		{"relay respects the batch size", func(t *T) {
+			db := NewDB()
+			seed(db, "a", "b", "c", "d", "e")
+			b := &broker{}
+			if n, _ := PublishPending(db, 2, b.publish); n != 2 || len(db.Pending(10)) != 3 {
+				t.Errorf("batch=2 published %d, %d pending; want 2 and 3", n, len(db.Pending(10)))
+			}
+		}},
+		{"broker outage: nothing lost, order preserved", func(t *T) {
+			db := NewDB()
+			seed(db, "a", "b", "c")
+			b := &broker{failAt: 2}
+			n, err := PublishPending(db, 10, b.publish)
+			if n != 1 || !errors.Is(err, errBrokerDown) {
+				t.Errorf("during outage got n=%d err=%v, want 1 and errBrokerDown", n, err)
+			}
+			if p := len(db.Pending(10)); p != 2 {
+				t.Errorf("%d rows pending after the outage, want 2 (b and c must not be marked)", p)
+			}
+			n, err = PublishPending(db, 10, b.publish) // broker recovered
+			if err != nil || n != 2 || strings.Join(b.sent, ",") != "a,b,c" {
+				t.Errorf("after recovery n=%d err=%v sent=%v, want 2, nil, [a b c]", n, err, b.sent)
+			}
+		}},
+	})
+}

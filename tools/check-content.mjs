@@ -8,6 +8,7 @@
  * - every lesson in data/lessons.js has a section in its module markdown file
  * - every ::diagram / ::widget referenced in markdown exists
  * - every concept referenced by a lesson is defined
+ * - every Code Lab exercise has its files, valid links and test names
  */
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -19,7 +20,7 @@ const ctx = { window: {}, console };
 ctx.window.MV = {};
 ctx.MV = ctx.window.MV;
 vm.createContext(ctx);
-for (const f of ['data/lessons.js', 'data/architectures.js', 'data/codebase.js', 'data/challenges.js', 'data/bootcamp.js', 'data/assessment.js']) {
+for (const f of ['data/lessons.js', 'data/architectures.js', 'data/codebase.js', 'data/challenges.js', 'data/bootcamp.js', 'data/assessment.js', 'data/exercises.js']) {
   if (existsSync(join(root, f))) vm.runInContext(readFileSync(join(root, f), 'utf8'), ctx, { filename: f });
 }
 const MV = ctx.MV;
@@ -43,7 +44,8 @@ for (const n of MV.data.lab.nodes) {
   else if (!readFileSync(p, 'utf8').includes(n.code.from)) problems.push(`lab ${n.id}: anchor not found: ${n.code.from}`);
 }
 
-const widgetsSrc = readdirSync(join(root, 'js', 'widgets')).map((f) => readFileSync(join(root, 'js', 'widgets', f), 'utf8')).join('\n');
+// Lesson widgets live in js/widgets/; the Code Lab registers the "exercise" embed.
+const widgetsSrc = readdirSync(join(root, 'js', 'widgets')).map((f) => readFileSync(join(root, 'js', 'widgets', f), 'utf8')).join('\n') + readFileSync(join(root, 'js', 'codelab.js'), 'utf8');
 for (const m of MV.data.modules) {
   const mdPath = join(root, 'content', 'modules', `${m.id}.md`);
   if (!existsSync(mdPath)) { problems.push(`module ${m.id}: missing ${mdPath}`); continue; }
@@ -57,6 +59,7 @@ for (const m of MV.data.modules) {
   for (const x of md.matchAll(/::diagram\{id="([^"]+)"/g)) if (!MV.data.diagrams[x[1]]) problems.push(`${m.id}.md: unknown diagram ${x[1]}`);
   const widgetDefined = (name) => [`MV.widgets['${name}']`, `MV.widgets["${name}"]`, `MV.widgets.${name} =`].some((s) => widgetsSrc.includes(s));
   for (const x of md.matchAll(/::widget\{name="([^"]+)"/g)) if (!widgetDefined(x[1])) problems.push(`${m.id}.md: unknown widget ${x[1]}`);
+  for (const x of md.matchAll(/::widget\{name="exercise" id="([^"]+)"/g)) if (!MV.data.exercises.some((e) => e.id === x[1])) problems.push(`${m.id}.md: unknown exercise ${x[1]}`);
   for (const x of md.matchAll(/:::quiz concept="([^"]+)"/g)) if (!MV.data.concepts[x[1]]) problems.push(`${m.id}.md: quiz uses unknown concept ${x[1]}`);
   md.split(':::quiz').slice(1).forEach((blk, i) => {
     const body = blk.split(/\n:::\s*\n/)[0];
@@ -71,6 +74,29 @@ for (const m of MV.data.modules) {
   }
 }
 
+// Code Lab exercises: files on disk, lesson/concept references, README links, test names.
+const exDir = join(root, 'content', 'exercises');
+const exLessonExists = (key) => MV.data.modules.some((m) => m.lessons.some((l) => `${m.id}/${l.id}` === key));
+for (const ex of MV.data.exercises) {
+  const dir = join(exDir, ex.id);
+  for (const f of ['README.md', 'starter.go.txt', 'solution.go.txt', 'tests.go.txt', ...(ex.support ? ['support.go.txt'] : [])]) {
+    if (!existsSync(join(dir, f))) problems.push(`exercise ${ex.id}: missing ${f}`);
+  }
+  if (!exLessonExists(ex.lesson)) problems.push(`exercise ${ex.id}: unknown lesson ${ex.lesson}`);
+  for (const c of ex.concepts) if (!MV.data.concepts[c]) problems.push(`exercise ${ex.id}: unknown concept ${c}`);
+  if (!ex.hints || ex.hints.length < 2) problems.push(`exercise ${ex.id}: needs at least two hints`);
+  if (!existsSync(join(dir, 'README.md'))) continue;
+  const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+  for (const x of readme.matchAll(/\]\(#\/lesson\/(m\d\d\/[\w-]+)\)/g)) if (!exLessonExists(x[1])) problems.push(`exercise ${ex.id}: broken lesson link ${x[1]}`);
+  for (const x of readme.matchAll(/\]\(#\/playground\?file=([^)]+)\)/g)) if (!cb.files.some((f) => f.path === x[1])) problems.push(`exercise ${ex.id}: playground file not in catalog ${x[1]}`);
+  if (existsSync(join(dir, 'tests.go.txt'))) {
+    const names = [...readFileSync(join(dir, 'tests.go.txt'), 'utf8').matchAll(/\{\s*"((?:[^"\\]|\\.)+)",\s*func\s*\(t \*T\)/g)].map((x) => x[1]);
+    if (names.length < 3) problems.push(`exercise ${ex.id}: found ${names.length} tests (the Code Lab reads names with {"name", func(t *T)})`);
+    if (new Set(names).size !== names.length) problems.push(`exercise ${ex.id}: duplicate test names`);
+  }
+}
+for (const x of MV.data.scratch.examples) if (!existsSync(join(exDir, 'scratch', x.file))) problems.push(`scratch example missing: ${x.file}`);
+
 // Bootcamp sessions and challenges reference lessons, widgets, diagrams, code and solutions.
 const widgetsAll = readdirSync(join(root, 'js', 'widgets')).map((f) => readFileSync(join(root, 'js', 'widgets', f), 'utf8')).join('\n');
 const hasWidget = (name) => [`MV.widgets['${name}']`, `MV.widgets["${name}"]`, `MV.widgets.${name} =`].some((s) => widgetsAll.includes(s));
@@ -80,6 +106,7 @@ for (const s of MV.data.bootcamp || []) {
   if (!MV.data.diagrams[s.diagram]) problems.push(`bootcamp ${s.id}: unknown diagram ${s.diagram}`);
   for (const k of s.lessons) if (!lessonExists(k)) problems.push(`bootcamp ${s.id}: unknown lesson ${k}`);
   if (!(MV.data.challenges || []).some((c) => c.id === s.challenge)) problems.push(`bootcamp ${s.id}: unknown challenge ${s.challenge}`);
+  if (s.exercise && !MV.data.exercises.some((e) => e.id === s.exercise)) problems.push(`bootcamp ${s.id}: unknown exercise ${s.exercise}`);
   const p = join(root, cb.root, s.code.file);
   if (!existsSync(p) || !readFileSync(p, 'utf8').includes(s.code.at)) problems.push(`bootcamp ${s.id}: code anchor not found in ${s.code.file}: ${s.code.at}`);
   if (s.trace && !cb.traces.some((t) => t.id === s.trace)) problems.push(`bootcamp ${s.id}: unknown trace ${s.trace}`);

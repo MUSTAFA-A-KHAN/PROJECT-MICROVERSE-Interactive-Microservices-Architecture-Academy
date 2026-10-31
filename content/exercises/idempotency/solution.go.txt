@@ -1,0 +1,53 @@
+package main
+
+import (
+	"errors"
+	"sync"
+)
+
+var ErrKeyReused = errors.New("idempotency key reused with a different request")
+
+type Response struct {
+	Status int
+	Body   string
+}
+
+// entry is one key's in-flight or completed call; done closes when fn returns.
+type entry struct {
+	fingerprint string
+	done        chan struct{}
+	resp        Response
+	err         error
+}
+
+type Store struct {
+	mu      sync.Mutex
+	entries map[string]*entry
+}
+
+func (s *Store) Do(key, fingerprint string, fn func() (Response, error)) (Response, bool, error) {
+	s.mu.Lock()
+	if s.entries == nil {
+		s.entries = make(map[string]*entry)
+	}
+	if e, ok := s.entries[key]; ok {
+		s.mu.Unlock()
+		if e.fingerprint != fingerprint {
+			return Response{}, false, ErrKeyReused
+		}
+		<-e.done // wait for the in-flight call (no-op if already finished)
+		return e.resp, true, e.err
+	}
+	e := &entry{fingerprint: fingerprint, done: make(chan struct{})}
+	s.entries[key] = e
+	s.mu.Unlock()
+
+	e.resp, e.err = fn() // no lock held: other keys proceed in parallel
+	if e.err != nil {
+		s.mu.Lock()
+		delete(s.entries, key) // failures are not remembered
+		s.mu.Unlock()
+	}
+	close(e.done)
+	return e.resp, false, e.err
+}

@@ -97,7 +97,9 @@ window.MV = window.MV || {};
     // 5. Challenge
     const chSt = MV.challenges.status(ch.id);
     body('challenge').innerHTML = `<a class="card card-link card-pad flex flex-wrap items-center gap-3" href="#/challenge/${ch.id}"><span class="icon-tile" style="--c:var(--warn)">${icon('swords')}</span><div class="flex-1 min-w-[220px]"><div class="font-semibold" style="color:var(--fg)">${esc(ch.title)}</div><div class="text-[13px] text-fg2">${esc(ch.tagline)}</div></div><span class="badge ${chSt.cls}">${icon(chSt.ic)}${chSt.label}</span>${icon('arrow-right', '', 16)}</a>
-      <p class="text-[12.5px] text-mutedc mt-2">This step completes automatically once you have attempted the challenge (evaluated a proposal or chosen an approach).</p>`;
+      <p class="text-[12.5px] text-mutedc mt-2">This step completes automatically once you have attempted the challenge (evaluated a proposal or chosen an approach).</p>
+      ${s.exercise ? '<div class="mt-4"><div class="eyebrow mb-2">Optional · write the code</div><div data-bc-exercise></div></div>' : ''}`;
+    if (s.exercise && MV.widgets.exercise) MV.widgets.exercise($('[data-bc-exercise]', view), { id: s.exercise });
 
     // 6. Quiz
     body('quiz').innerHTML = `<div class="grid gap-3">${s.quiz.map((q, i) => MV.quiz.html(q, i, { label: `Question ${i + 1} of ${s.quiz.length}` })).join('')}</div><div class="mt-3" data-quiz-score></div>`;

@@ -1,0 +1,109 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"strings"
+)
+
+var errPayment = errors.New("card declined")
+
+type trail struct{ events []string }
+
+func (tr *trail) step(name string, fail error) Step {
+	return Step{
+		Name:       name,
+		Action:     func(ctx context.Context) error { tr.events = append(tr.events, name); return fail },
+		Compensate: func(ctx context.Context) error { tr.events = append(tr.events, "undo "+name); return nil },
+	}
+}
+
+func (tr *trail) String() string { return strings.Join(tr.events, ", ") }
+
+func main() {
+	runTests([]testCase{
+		{"all steps succeed: nothing is compensated", func(t *T) {
+			tr := &trail{}
+			err := Run(context.Background(), []Step{tr.step("reserve", nil), tr.step("charge", nil), tr.step("ship", nil)})
+			if err != nil || tr.String() != "reserve, charge, ship" {
+				t.Errorf("got err=%v trail=[%s], want nil and [reserve, charge, ship]", err, tr)
+			}
+		}},
+		{"failure compensates completed steps in reverse", func(t *T) {
+			tr := &trail{}
+			Run(context.Background(), []Step{tr.step("reserve", nil), tr.step("charge", nil), tr.step("ship", errors.New("no courier"))})
+			want := "reserve, charge, ship, undo charge, undo reserve"
+			if tr.String() != want {
+				t.Errorf("trail = [%s], want [%s] (the failed step itself is not compensated)", tr, want)
+			}
+		}},
+		{"error wraps the cause and names the step", func(t *T) {
+			tr := &trail{}
+			err := Run(context.Background(), []Step{tr.step("reserve", nil), tr.step("charge", errPayment)})
+			if !errors.Is(err, errPayment) || !strings.Contains(err.Error(), "charge") {
+				t.Errorf("err = %v; want it to wrap errPayment and mention \"charge\"", err)
+			}
+			if errors.Is(err, ErrCompensationFailed) {
+				t.Errorf("compensations succeeded, so err must not wrap ErrCompensationFailed")
+			}
+		}},
+		{"compensations are retried up to 3 attempts", func(t *T) {
+			calls := 0
+			flaky := Step{Name: "reserve", Action: func(context.Context) error { return nil },
+				Compensate: func(context.Context) error {
+					calls++
+					if calls < 3 {
+						return errors.New("inventory timeout")
+					}
+					return nil
+				}}
+			err := Run(context.Background(), []Step{flaky, {Name: "charge", Action: func(context.Context) error { return errPayment }}})
+			if calls != 3 || errors.Is(err, ErrCompensationFailed) {
+				t.Errorf("compensation called %d times (want 3), ErrCompensationFailed=%v (want false)", calls, errors.Is(err, ErrCompensationFailed))
+			}
+		}},
+		{"a stuck compensation is reported and the rest still run", func(t *T) {
+			tr := &trail{}
+			calls := 0
+			stuck := Step{Name: "charge", Action: func(context.Context) error { return nil },
+				Compensate: func(context.Context) error { calls++; return errors.New("payments API down") }}
+			err := Run(context.Background(), []Step{tr.step("reserve", nil), stuck, tr.step("ship", errors.New("no courier"))})
+			if calls != 3 {
+				t.Errorf("stuck compensation attempted %d times, want 3", calls)
+			}
+			if !errors.Is(err, ErrCompensationFailed) || !strings.Contains(err.Error(), "charge") {
+				t.Errorf("err = %v; want ErrCompensationFailed naming \"charge\"", err)
+			}
+			if !strings.Contains(tr.String(), "undo reserve") {
+				t.Errorf("trail = [%s]; earlier steps must still be compensated", tr)
+			}
+		}},
+		{"steps without a compensation are skipped", func(t *T) {
+			tr := &trail{}
+			readOnly := Step{Name: "validate", Action: func(context.Context) error { return nil }}
+			Run(context.Background(), []Step{tr.step("reserve", nil), readOnly, tr.step("charge", errPayment)})
+			if tr.String() != "reserve, charge, undo reserve" {
+				t.Errorf("trail = [%s], want [reserve, charge, undo reserve]", tr)
+			}
+		}},
+		{"cancellation stops new steps but still compensates", func(t *T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			compCtxErr := errors.New("compensation never ran")
+			ranSecond := false
+			err := Run(ctx, []Step{
+				{Name: "reserve", Action: func(context.Context) error { cancel(); return nil },
+					Compensate: func(c context.Context) error { compCtxErr = c.Err(); return nil }},
+				{Name: "charge", Action: func(context.Context) error { ranSecond = true; return nil }},
+			})
+			if ranSecond {
+				t.Errorf("a step started after ctx was cancelled")
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("err = %v, want it to wrap context.Canceled", err)
+			}
+			if compCtxErr != nil {
+				t.Errorf("compensation saw ctx error %v — use context.WithoutCancel so undo can finish", compCtxErr)
+			}
+		}},
+	})
+}

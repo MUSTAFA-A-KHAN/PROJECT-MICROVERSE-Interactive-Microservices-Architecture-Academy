@@ -43,7 +43,7 @@ MV.data.bootcamp = [
     diagram: 'go-layers',
     code: { file: 'order-service/cmd/server/main.go', at: '// Wiring', text: 'The composition root: every concrete type is created here and injected — read it as the service’s dependency graph.' },
     trace: 'lifecycle',
-    challenge: 'double-click',
+    challenge: 'double-click', exercise: 'http-middleware',
     quiz: [
       { concept: 'go-structure', question: 'What does placing code under internal/ guarantee?', options: ['Faster compilation', 'Only code in the same module tree can import it', 'It is excluded from tests', 'It runs in a separate goroutine'], answer: 1, explain: 'The Go toolchain enforces internal/ visibility, protecting your freedom to change it.' },
       { concept: 'interfaces', question: 'Where should OrderService’s Repository interface be declared?', options: ['In the repository package', 'In the service package that uses it', 'In a shared interfaces module', 'Nowhere — use concrete types'], answer: 1, explain: 'Consumer-side interfaces stay small and don’t couple the consumer to the implementation.' },
@@ -66,7 +66,7 @@ MV.data.bootcamp = [
     diagram: 'oms',
     code: { file: 'order-service/internal/client/user_client.go', at: 'func (c *UserClient) getOnce(', text: 'One attempt of the Order → User call: per-attempt deadline, request-ID propagation, body draining and status translation.' },
     trace: 'create-order',
-    challenge: 'user-down',
+    challenge: 'user-down', exercise: 'retry-backoff',
     quiz: [
       { concept: 'sync-communication', question: 'Order Service needs the customer’s status to accept an order. Which style?', options: ['Async event', 'Synchronous call (with timeout and fallback)', 'Nightly batch', 'Shared database read'], answer: 1, explain: 'The answer is needed to decide, so it’s synchronous — protected by timeouts, retries and a breaker.' },
       { concept: 'event-driven', question: 'Sending the confirmation email should be…', options: ['Synchronous, inside the request', 'An event consumed asynchronously', 'Done by the gateway', 'Skipped'], answer: 1, explain: 'It’s a side effect: publish an event so the request doesn’t depend on email availability.' },
@@ -88,7 +88,7 @@ MV.data.bootcamp = [
     lessons: ['m04/gateway-intro', 'm04/gateway-auth', 'm04/rate-limiting', 'm02/middleware'],
     diagram: 'jwt-flow',
     code: { file: 'api-gateway/middleware/auth.go', at: 'func JWTAuth(', text: 'Strict JWT verification at the edge: pinned algorithm, issuer, audience, expiry and clock-skew leeway.' },
-    challenge: 'traffic-10k',
+    challenge: 'traffic-10k', exercise: 'token-bucket',
     quiz: [
       { concept: 'jwt-auth', question: 'Why can the gateway authenticate without calling User Service?', options: ['It caches the users table', 'It verifies the token’s signature locally', 'JWTs are encrypted', 'User Service pushes sessions'], answer: 1, explain: 'Signature verification is a local cryptographic check.' },
       { concept: 'authorization', question: 'Who must check that order 9000 belongs to the caller?', options: ['The gateway', 'Order Service', 'User Service', 'The client'], answer: 1, explain: 'Authorisation depends on data owned by Order Service.' },
@@ -110,7 +110,7 @@ MV.data.bootcamp = [
     lessons: ['m07/pattern-circuit-breaker', 'm07/pattern-retry', 'm07/pattern-outbox', 'm07/pattern-saga'],
     diagram: 'p-outbox',
     code: { file: 'order-service/internal/repository/order_repository.go', at: 'func (r *OrderRepository) PublishPending(', text: 'The outbox relay’s claim: FOR UPDATE SKIP LOCKED, ordered publishing, stop at the first failure, mark the rest.' },
-    challenge: 'lost-emails',
+    challenge: 'lost-emails', exercise: 'outbox',
     quiz: [
       { concept: 'circuit-breaker', question: 'What happens to calls while a breaker is open?', options: ['Queued', 'Fail immediately', 'Retried', 'Sent with a shorter timeout'], answer: 1, explain: 'Failing fast protects the caller and gives the dependency room to recover.' },
       { concept: 'retries', question: 'Why add jitter to backoff?', options: ['To retry faster', 'To desynchronise clients and avoid waves', 'To guarantee success', 'Because timers are imprecise'], answer: 1, explain: 'Without jitter, clients that failed together retry together.' },

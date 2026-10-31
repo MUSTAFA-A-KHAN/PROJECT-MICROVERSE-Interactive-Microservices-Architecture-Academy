@@ -1,0 +1,34 @@
+package main
+
+import (
+	"errors"
+)
+
+var ErrKeyReused = errors.New("idempotency key reused with a different request")
+
+// Response is what the handler would send back.
+type Response struct {
+	Status int
+	Body   string
+}
+
+// Store makes a side-effecting operation safe to retry. Clients send an
+// Idempotency-Key header; the fingerprint is a hash of the request body.
+type Store struct {
+	// TODO: remember each key's fingerprint and outcome; guard with a mutex.
+}
+
+// Do runs fn at most once per key and returns (response, replayed, error).
+//
+//   - First call for a key: run fn, return its result with replayed=false.
+//   - Later call, same key + same fingerprint: return the stored response with
+//     replayed=true, without running fn.
+//   - Same key, different fingerprint: return ErrKeyReused.
+//   - Concurrent duplicates: wait for the in-flight call and share its outcome.
+//   - If fn returns an error, forget the key so the client's retry runs fn again.
+//   - Don't hold a lock while fn runs — different keys must not block each other.
+func (s *Store) Do(key, fingerprint string, fn func() (Response, error)) (Response, bool, error) {
+	// TODO: this runs fn every time, so a retried POST creates a second order.
+	resp, err := fn()
+	return resp, false, err
+}

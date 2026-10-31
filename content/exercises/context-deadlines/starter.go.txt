@@ -1,0 +1,31 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// Fetcher is any call that does I/O and respects ctx (like an HTTP or SQL call).
+type Fetcher func(ctx context.Context) (string, error)
+
+// FetchWithTimeout calls fetch with a context that expires after timeout.
+//   - fetch finishes in time → return its result
+//   - it doesn't → return an error that satisfies errors.Is(err, context.DeadlineExceeded)
+//   - the parent ctx is cancelled → stop too
+//   - always release the derived context's resources
+func FetchWithTimeout(ctx context.Context, timeout time.Duration, fetch Fetcher) (string, error) {
+	// TODO: derive a context with a deadline and pass it to fetch
+	return fetch(ctx)
+}
+
+// FirstResponse sends the same request to every replica at once ("hedging")
+// and returns the first successful answer. When it has an answer it must
+// cancel the other in-flight calls. If every replica fails, return an error
+// that wraps all of their errors (errors.Join). Respect ctx.
+//
+// Careful: goroutines that finish after you've returned must not block forever.
+func FirstResponse(ctx context.Context, replicas []Fetcher) (string, error) {
+	// TODO
+	return "", errors.New("not implemented")
+}

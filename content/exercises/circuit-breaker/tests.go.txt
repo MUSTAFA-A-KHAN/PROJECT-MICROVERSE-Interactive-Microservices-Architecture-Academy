@@ -1,0 +1,113 @@
+package main
+
+import (
+	"errors"
+	"sync"
+	"time"
+)
+
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time            { return c.t }
+func (c *clock) advance(d time.Duration)   { c.t = c.t.Add(d) }
+func newBreaker(c *clock) *Breaker         { return &Breaker{Threshold: 3, Cooldown: 10 * time.Second, Now: c.now} }
+func call(b *Breaker, failed bool) error {
+	if err := b.Allow(); err != nil {
+		return err
+	}
+	b.Record(failed)
+	return nil
+}
+
+func main() {
+	runTests([]testCase{
+		{"opens after Threshold consecutive failures", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := newBreaker(c)
+			for i := 0; i < 3; i++ {
+				if err := call(b, true); err != nil {
+					t.Fatalf("call %d rejected while closed: %v", i+1, err)
+				}
+			}
+			if b.State() != Open {
+				t.Errorf("state = %v, want Open after 3 failures", b.State())
+			}
+		}},
+		{"fails fast while open", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := newBreaker(c)
+			for i := 0; i < 3; i++ {
+				_ = call(b, true)
+			}
+			c.advance(5 * time.Second)
+			if err := b.Allow(); !errors.Is(err, ErrOpen) {
+				t.Errorf("Allow during cooldown = %v, want ErrOpen", err)
+			}
+		}},
+		{"a success resets the failure count", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := newBreaker(c)
+			for _, f := range []bool{true, true, false, true, true} {
+				_ = call(b, f)
+			}
+			if b.State() != Closed {
+				t.Errorf("state = %v; failures were not consecutive, want Closed", b.State())
+			}
+		}},
+		{"half-open after cooldown allows exactly one probe", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := newBreaker(c)
+			for i := 0; i < 3; i++ {
+				_ = call(b, true)
+			}
+			c.advance(10 * time.Second)
+			if b.State() != HalfOpen {
+				t.Errorf("state after cooldown = %v, want HalfOpen", b.State())
+			}
+			if err := b.Allow(); err != nil {
+				t.Fatalf("probe rejected: %v", err)
+			}
+			if err := b.Allow(); !errors.Is(err, ErrOpen) {
+				t.Errorf("second concurrent probe = %v, want ErrOpen", err)
+			}
+			b.Record(false)
+			if b.State() != Closed {
+				t.Errorf("state after successful probe = %v, want Closed", b.State())
+			}
+		}},
+		{"failed probe re-opens with a fresh cooldown", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := newBreaker(c)
+			for i := 0; i < 3; i++ {
+				_ = call(b, true)
+			}
+			c.advance(10 * time.Second)
+			_ = call(b, true) // probe fails
+			if b.State() != Open {
+				t.Fatalf("state = %v, want Open after failed probe", b.State())
+			}
+			c.advance(9 * time.Second)
+			if b.State() != Open {
+				t.Errorf("cooldown should restart from the failed probe")
+			}
+		}},
+		{"safe for concurrent use", func(t *T) {
+			c := &clock{t: time.Unix(0, 0)}
+			b := &Breaker{Threshold: 1000, Cooldown: time.Second, Now: c.now}
+			var wg sync.WaitGroup
+			for i := 0; i < 50; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					for j := 0; j < 100; j++ {
+						_ = call(b, (i+j)%2 == 0)
+					}
+				}(i)
+			}
+			wg.Wait()
+			if s := b.State(); s != Closed && s != Open {
+				t.Errorf("unexpected state %v", s)
+			}
+		}},
+	})
+}

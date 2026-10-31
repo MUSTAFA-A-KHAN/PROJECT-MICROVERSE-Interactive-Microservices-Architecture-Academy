@@ -1,0 +1,45 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// Domain errors returned by the order service.
+var (
+	ErrNotFound          = errors.New("order not found")
+	ErrInvalidTransition = errors.New("invalid status transition")
+)
+
+// ValidationError carries the field that failed validation.
+type ValidationError struct {
+	Field  string
+	Reason string
+}
+
+func (e *ValidationError) Error() string { return fmt.Sprintf("%s: %s", e.Field, e.Reason) }
+
+// FindOrder wraps ErrNotFound with context. %w keeps the original error
+// inspectable with errors.Is further up the call stack.
+func FindOrder(id int) error {
+	return fmt.Errorf("find order %d: %w", id, ErrNotFound)
+}
+
+// StatusFor walks the wrap chain: errors.Is for sentinel values,
+// errors.As for typed errors that carry data.
+func StatusFor(err error) int {
+	var ve *ValidationError
+	switch {
+	case err == nil:
+		return http.StatusOK
+	case errors.Is(err, ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrInvalidTransition):
+		return http.StatusConflict
+	case errors.As(err, &ve):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
+}

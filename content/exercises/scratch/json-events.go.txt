@@ -1,0 +1,64 @@
+// Versioned event envelopes: decode by type, ignore fields you don't know yet.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+type Envelope struct {
+	ID         string          `json:"id"`
+	Type       string          `json:"type"`
+	Version    int             `json:"version"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	Data       json.RawMessage `json:"data"` // decoded later, once we know the type
+}
+
+type OrderCreated struct {
+	OrderID    string `json:"order_id"`
+	TotalCents int64  `json:"total_cents"`
+}
+
+type OrderCancelled struct {
+	OrderID string `json:"order_id"`
+	Reason  string `json:"reason"`
+}
+
+func handle(raw []byte) error {
+	var env Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("bad envelope: %w", err)
+	}
+	switch env.Type {
+	case "order.created":
+		var e OrderCreated
+		if err := json.Unmarshal(env.Data, &e); err != nil {
+			return err
+		}
+		fmt.Printf("v%d %s: order %s for $%.2f\n", env.Version, env.Type, e.OrderID, float64(e.TotalCents)/100)
+	case "order.cancelled":
+		var e OrderCancelled
+		if err := json.Unmarshal(env.Data, &e); err != nil {
+			return err
+		}
+		fmt.Printf("v%d %s: order %s (%s)\n", env.Version, env.Type, e.OrderID, e.Reason)
+	default:
+		fmt.Printf("skipping unknown event type %q (a newer producer?)\n", env.Type)
+	}
+	return nil
+}
+
+func main() {
+	messages := []string{
+		`{"id":"evt_1","type":"order.created","version":1,"occurred_at":"2026-10-31T09:00:00Z","data":{"order_id":"ord_1","total_cents":4998}}`,
+		`{"id":"evt_2","type":"order.created","version":2,"occurred_at":"2026-10-31T09:01:00Z","data":{"order_id":"ord_2","total_cents":1250,"currency":"EUR"}}`,
+		`{"id":"evt_3","type":"order.cancelled","version":1,"occurred_at":"2026-10-31T09:05:00Z","data":{"order_id":"ord_1","reason":"customer request"}}`,
+		`{"id":"evt_4","type":"payment.refunded","version":1,"occurred_at":"2026-10-31T09:06:00Z","data":{}}`,
+	}
+	for _, m := range messages {
+		if err := handle([]byte(m)); err != nil {
+			fmt.Println("error:", err)
+		}
+	}
+}

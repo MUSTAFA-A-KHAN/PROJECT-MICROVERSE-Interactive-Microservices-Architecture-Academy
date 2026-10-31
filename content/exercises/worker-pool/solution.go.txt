@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	"sync"
+)
+
+func Process(parent context.Context, jobs []int, workers int, fn func(context.Context, int) (int, error)) ([]int, error) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	out := make([]int, len(jobs))
+	indexes := make(chan int) // workers receive job indexes, so results keep their order
+
+	var (
+		wg       sync.WaitGroup
+		once     sync.Once
+		firstErr error
+	)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range indexes {
+				v, err := fn(ctx, jobs[i])
+				if err != nil {
+					once.Do(func() { firstErr = err; cancel() }) // first error wins and stops the rest
+					continue
+				}
+				out[i] = v // each index is written by exactly one worker: no lock needed
+			}
+		}()
+	}
+
+	// Producer: stop handing out work once anything cancels the context.
+feed:
+	for i := range jobs {
+		select {
+		case indexes <- i:
+		case <-ctx.Done():
+			break feed
+		}
+	}
+	close(indexes) // lets the workers' range loops finish
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err // the caller gave up before every job ran
+	}
+	return out, nil
+}

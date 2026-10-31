@@ -1,0 +1,74 @@
+package main
+
+import (
+	"math"
+	"sync"
+	"time"
+)
+
+type Bucket struct {
+	Capacity float64
+	Rate     float64
+	Now      func() time.Time
+
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+}
+
+func NewBucket(capacity, rate float64, now func() time.Time) *Bucket {
+	return &Bucket{Capacity: capacity, Rate: rate, Now: now, tokens: capacity, last: now()}
+}
+
+// refill adds the tokens earned since the last call. Caller holds mu.
+func (b *Bucket) refill() {
+	now := b.Now()
+	if elapsed := now.Sub(b.last).Seconds(); elapsed > 0 {
+		b.tokens = math.Min(b.Capacity, b.tokens+elapsed*b.Rate)
+	}
+	b.last = now
+}
+
+func (b *Bucket) Allow() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refill()
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+func (b *Bucket) RetryAfter() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refill()
+	if b.tokens >= 1 {
+		return 0
+	}
+	return time.Duration((1 - b.tokens) / b.Rate * float64(time.Second))
+}
+
+type Limiter struct {
+	Capacity float64
+	Rate     float64
+	Now      func() time.Time
+
+	mu      sync.Mutex
+	buckets map[string]*Bucket
+}
+
+func (l *Limiter) Allow(key string) bool {
+	l.mu.Lock()
+	if l.buckets == nil {
+		l.buckets = make(map[string]*Bucket)
+	}
+	b, ok := l.buckets[key]
+	if !ok {
+		b = NewBucket(l.Capacity, l.Rate, l.Now)
+		l.buckets[key] = b
+	}
+	l.mu.Unlock()
+	return b.Allow()
+}

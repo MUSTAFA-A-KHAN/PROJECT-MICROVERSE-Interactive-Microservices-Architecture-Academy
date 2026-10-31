@@ -1,0 +1,52 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+type Status string
+
+const (
+	Pending   Status = "PENDING"
+	Confirmed Status = "CONFIRMED"
+	Shipped   Status = "SHIPPED"
+	Delivered Status = "DELIVERED"
+	Cancelled Status = "CANCELLED"
+)
+
+var ErrInvalidTransition = errors.New("invalid status transition")
+
+type Order struct {
+	ID      int
+	Status  Status
+	Version int
+}
+
+// transitions is the lifecycle as data: easy to read, test and extend.
+var transitions = map[Status][]Status{
+	Pending:   {Confirmed, Cancelled},
+	Confirmed: {Shipped, Cancelled},
+	Shipped:   {Delivered},
+}
+
+func CanTransition(from, to Status) bool {
+	for _, allowed := range transitions[from] {
+		if allowed == to {
+			return true
+		}
+	}
+	return false
+}
+
+func Transition(o *Order, to Status) error {
+	if o.Status == to {
+		return nil // idempotent: a retried request changes nothing
+	}
+	if !CanTransition(o.Status, to) {
+		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, o.Status, to)
+	}
+	o.Status = to
+	o.Version++
+	return nil
+}

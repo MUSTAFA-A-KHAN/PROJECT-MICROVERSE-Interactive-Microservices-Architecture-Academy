@@ -1,0 +1,35 @@
+package main
+
+import (
+	"net/http"
+)
+
+// Middleware wraps a handler with cross-cutting behaviour.
+type Middleware func(http.Handler) http.Handler
+
+// Chain applies middleware so the FIRST one listed is the OUTERMOST:
+// Chain(h, A, B) handles a request as A → B → h.
+func Chain(h http.Handler, mws ...Middleware) http.Handler {
+	// TODO
+	return h
+}
+
+// RequestID makes sure every request carries an X-Request-ID:
+//   - reuse the incoming header if present, otherwise generate one with newID()
+//   - set it on the request (so handlers and downstream calls see it)
+//   - echo it on the response header
+func RequestID(newID func() string) Middleware {
+	return func(next http.Handler) http.Handler {
+		// TODO
+		return next
+	}
+}
+
+// Recover turns a panic in a handler into a 500 response with the JSON body
+// {"error":"internal"} instead of crashing the server. Log via logf.
+func Recover(logf func(format string, args ...any)) Middleware {
+	return func(next http.Handler) http.Handler {
+		// TODO
+		return next
+	}
+}

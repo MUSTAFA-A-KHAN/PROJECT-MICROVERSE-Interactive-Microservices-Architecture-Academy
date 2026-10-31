@@ -1,0 +1,23 @@
+package main
+
+import "context"
+
+// Process applies fn to every job using at most `workers` goroutines at once,
+// and returns the results in the SAME ORDER as jobs.
+//
+// If any call returns an error, Process returns that (first) error and cancels
+// the ctx passed to the other calls so they can stop early.
+//
+// Only the standard library is available (sync, context, …).
+func Process(ctx context.Context, jobs []int, workers int, fn func(context.Context, int) (int, error)) ([]int, error) {
+	// TODO: replace this sequential loop with a bounded worker pool.
+	out := make([]int, len(jobs))
+	for i, j := range jobs {
+		v, err := fn(ctx, j)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}

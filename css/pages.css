@@ -13,6 +13,7 @@
   @media (max-width: 760px) { .dash-hero-inner { grid-template-columns: 1fr; padding: 22px 18px; } .dash-hero-figure { justify-self: start; } }
   .dash-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 16px; }
   .dash-stat { display: flex; gap: 12px; align-items: flex-start; padding: 14px; }
+  .dash-rows-2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); column-gap: 8px; }
   .dash-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
   @media (max-width: 1000px) { .dash-grid { grid-template-columns: 1fr; } }
   .dash-path { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; position: relative; }

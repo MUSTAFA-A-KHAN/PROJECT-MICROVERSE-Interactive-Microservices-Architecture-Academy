@@ -133,6 +133,7 @@ window.MV = window.MV || {};
             <div class="card-head"><div class="card-title flex items-center gap-2">${icon('library', '', 16)}Modules</div><a class="text-[12.5px]" href="#/modules">View all</a></div>
             <div class="dash-modules">${MV.catalog.modules.map((m) => { const p = MV.shell.moduleProgress(m); return `<a class="dash-mod" href="#/module/${m.id}"><span class="mono text-[11px] text-mutedc">${m.num}</span><span class="flex-1 min-w-0 truncate">${esc(m.nav)}</span><span class="bar bar-thin" style="width:72px"><span style="--v:${(p.pct * 100).toFixed(0)}%"></span></span><span class="mono text-[11px] text-mutedc" style="width:30px;text-align:right">${p.done}/${p.total}</span></a>`; }).join('')}</div>
           </section>
+          ${codeLabCard()}
         </div>
         <div class="grid gap-4 content-start">
           <a class="card card-link spotlight dash-lab" href="#/lab" data-reveal>
@@ -142,7 +143,7 @@ window.MV = window.MV || {};
           </a>
           <section class="card" data-reveal>
             <div class="card-head"><div class="card-title flex items-center gap-2">${icon('history', '', 16)}Recently accessed</div></div>
-            <div class="p-2">${recent.length ? recent.map((r) => `<a class="dash-row" href="${r.route}">${icon(r.kind && r.kind.startsWith('Lesson') ? 'book-open' : r.kind === 'Challenge' ? 'swords' : r.kind === 'Source file' ? 'file-code-2' : r.kind === 'Bootcamp' ? 'timer' : 'compass', '', 15)}<span class="flex-1 min-w-0"><span class="block truncate" style="color:var(--fg)">${esc(r.title)}</span><span class="block text-[11.5px] text-mutedc">${esc(r.kind || '')}</span></span><span class="text-[11.5px] text-mutedc">${timeAgo(r.at)}</span></a>`).join('') : `<div class="empty" style="margin:8px">${icon('compass')}<span>Your recently opened lessons, files and challenges will appear here.</span></div>`}</div>
+            <div class="p-2">${recent.length ? recent.map((r) => `<a class="dash-row" href="${r.route}">${icon(r.kind && r.kind.startsWith('Lesson') ? 'book-open' : r.kind === 'Challenge' ? 'swords' : r.kind === 'Source file' ? 'file-code-2' : r.kind === 'Bootcamp' ? 'timer' : r.kind === 'Exercise' ? 'code-xml' : r.kind === 'Scratchpad' ? 'square-terminal' : 'compass', '', 15)}<span class="flex-1 min-w-0"><span class="block truncate" style="color:var(--fg)">${esc(r.title)}</span><span class="block text-[11.5px] text-mutedc">${esc(r.kind || '')}</span></span><span class="text-[11.5px] text-mutedc">${timeAgo(r.at)}</span></a>`).join('') : `<div class="empty" style="margin:8px">${icon('compass')}<span>Your recently opened lessons, files and challenges will appear here.</span></div>`}</div>
           </section>
           <section class="card" data-reveal>
             <div class="card-head"><div class="card-title flex items-center gap-2">${icon('swords', '', 16)}Upcoming challenges</div><a class="text-[12.5px]" href="#/challenges">All</a></div>
@@ -159,6 +160,20 @@ window.MV = window.MV || {};
     const num = $('[data-count]', view);
     MV.ui.countUp(num, +num.dataset.count, { suffix: '%' });
     if (window.gsap && !MV.reducedMotion) gsap.from($$('.dash-lab-visual .lm-pkt', view), { opacity: 0, duration: 0.6, stagger: 0.2 });
+  }
+
+  /** Dashboard card: Code Lab progress and the next exercises to try. */
+  function codeLabCard() {
+    const all = MV.data.exercises;
+    const ex = store.get().exercises || {};
+    const solved = all.filter((e) => ex[e.id] && ex[e.id].solved).length;
+    const next = all.filter((e) => !(ex[e.id] && ex[e.id].solved)).slice(0, 3);
+    const LV = { Beginner: 'badge-green', Intermediate: 'badge-warn', Advanced: 'badge-err' };
+    return `<section class="card" data-reveal>
+      <div class="card-head"><div class="card-title flex items-center gap-2">${icon('code-xml', '', 16)}Code Lab</div><a class="text-[12.5px]" href="#/code">${solved}/${all.length} solved</a></div>
+      <div class="p-2">${next.length ? next.map((e) => { const st = MV.codelab.status(e.id); return `<a class="dash-row" href="#/code/${e.id}"><span class="badge badge-square ${LV[e.level]}">${e.level}</span><span class="flex-1 min-w-0 truncate" style="color:var(--fg)">${esc(e.title)}</span>${st.label !== 'New' ? `<span class="text-[11.5px] text-mutedc">${esc(st.label)}</span>` : ''}${icon('arrow-right', '', 14)}</a>`; }).join('') : `<div class="empty" style="margin:8px">${icon('trophy')}<strong>Every exercise solved</strong><a class="btn btn-sm mt-1" href="#/code/scratch">Open the scratchpad</a></div>`}
+        <a class="mini-link mt-1" href="#/code/scratch">${icon('square-terminal', '', 15)}<span class="flex-1">Go scratchpad: edit and run any program</span></a></div>
+    </section>`;
   }
 
   function stat(ic, label, value, sub, color) {
@@ -205,7 +220,9 @@ window.MV = window.MV || {};
           <div class="grid md:grid-cols-2 gap-4 mt-5">
             <div class="card"><div class="card-head"><div class="card-title">Challenges</div></div><div class="p-2">${MV.data.challenges.map((c) => { const st = MV.challenges.status(c.id); const r = s.challenges[c.id]; return `<a class="dash-row" href="#/challenge/${c.id}"><span class="badge ${st.cls}">${icon(st.ic)}${st.label}</span><span class="flex-1 min-w-0 truncate" style="color:var(--fg)">${esc(c.title)}</span><span class="text-[11.5px] text-mutedc">${r && r.rubricScore !== undefined ? `self-check ${r.rubricScore}%` : ''}</span></a>`; }).join('')}</div></div>
             <div class="card"><div class="card-head"><div class="card-title">Bootcamp</div></div><div class="p-2">${MV.data.bootcamp.map((b) => { const st = s.bootcamp[b.id] || { steps: {} }; const n = MV.bootcamp.STEPS.filter(([k]) => st.steps[k]).length; return `<a class="dash-row" href="#/bootcamp/${b.id}"><span class="badge ${st.completedAt ? 'badge-green' : n ? 'badge-blue' : 'badge-muted'}">${st.completedAt ? 'Complete' : `${n}/6`}</span><span class="flex-1 min-w-0 truncate" style="color:var(--fg)">Session ${b.num}: ${esc(b.title)}</span><span class="text-[11.5px] text-mutedc">${st.quiz ? `quiz ${st.quiz.correct}/${st.quiz.total}` : ''}</span></a>`; }).join('')}</div></div>
-          </div>`;
+          </div>
+          <div class="card mt-4"><div class="card-head"><div class="card-title">Code Lab</div><a class="text-[12.5px]" href="#/code">${MV.codelab.solvedCount()}/${MV.data.exercises.length} solved</a></div>
+            <div class="p-2 dash-rows-2">${MV.data.exercises.map((e) => { const st = MV.codelab.status(e.id); const r = (s.exercises || {})[e.id]; return `<a class="dash-row" href="#/code/${e.id}"><span class="badge ${st.cls}">${icon(st.ic)}${esc(st.label)}</span><span class="flex-1 min-w-0 truncate" style="color:var(--fg)">${esc(e.title)}</span><span class="text-[11.5px] text-mutedc">${r && r.runs ? `${r.runs} run${r.runs === 1 ? '' : 's'}` : ''}</span></a>`; }).join('')}</div></div>`;
       },
       concepts: () => {
         const rows = conceptRows().sort((a, b) => ({ weak: 0, review: 1, strong: 2, unseen: 3 }[a.level] - { weak: 0, review: 1, strong: 2, unseen: 3 }[b.level]) || (a.mastery ?? 2) - (b.mastery ?? 2));
@@ -244,7 +261,7 @@ window.MV = window.MV || {};
           <div class="table-wrap mt-4"><table class="table"><thead><tr><th>Area</th><th>Time</th></tr></thead><tbody>${areas.length ? areas.map(([k, v]) => `<tr><td style="color:var(--fg)">${esc(name(k))}</td><td class="tabular">${fmtDuration(v)}</td></tr>`).join('') : '<tr><td colspan="2" class="text-mutedc">No time recorded yet.</td></tr>'}</tbody></table></div>`;
       },
       data: () => `<div class="grid md:grid-cols-3 gap-4">
-          <div class="card card-pad grid gap-2 content-start"><div class="card-title">Export</div><p class="text-[13px] text-fg2">Download your progress (lessons, quizzes, challenges, bookmarks, time) as JSON.</p><button class="btn" type="button" data-export>${icon('download')}Export progress</button></div>
+          <div class="card card-pad grid gap-2 content-start"><div class="card-title">Export</div><p class="text-[13px] text-fg2">Download your progress (lessons, quizzes, challenges, code exercises, bookmarks, time) as JSON.</p><button class="btn" type="button" data-export>${icon('download')}Export progress</button></div>
           <div class="card card-pad grid gap-2 content-start"><div class="card-title">Import</div><p class="text-[13px] text-fg2">Restore a previously exported file. This replaces your current progress.</p><label class="btn" style="cursor:pointer">${icon('upload')}Choose file<input type="file" accept="application/json,.json" data-import hidden></label></div>
           <div class="card card-pad grid gap-2 content-start"><div class="card-title">Reset</div><p class="text-[13px] text-fg2">Clear all progress in this browser. Your theme preference is kept.</p><button class="btn btn-danger" type="button" data-reset>${icon('trash-2')}Reset progress</button></div>
         </div>`,
@@ -267,7 +284,7 @@ window.MV = window.MV || {};
       });
       const rs = $('[data-reset]', p);
       if (rs) rs.addEventListener('click', async () => {
-        const ok = await MV.ui.confirm({ title: 'Reset all progress?', message: 'Lessons, quiz answers, challenges, bookmarks, time and lab layout will be cleared from this browser. This cannot be undone — export first if you might want it back.', confirmText: 'Reset progress', danger: true });
+        const ok = await MV.ui.confirm({ title: 'Reset all progress?', message: 'Lessons, quiz answers, challenges, your Code Lab code and drafts, bookmarks, time and lab layout will be cleared from this browser. This cannot be undone — export first if you might want it back.', confirmText: 'Reset progress', danger: true });
         if (ok) { store.reset(); toast('Progress reset', { type: 'info' }); draw(); }
       });
     }

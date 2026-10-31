@@ -23,6 +23,8 @@
     r.add('/bootcamp/:id', (v, p, q, nav) => MV.bootcamp.renderSession(v, p, q, nav), { page: 'bootcamp' });
     r.add('/lab', (v, p, q) => MV.lab.render(v, q), { page: 'lab', full: true });
     r.add('/playground', (v, p, q, nav) => MV.playground.render(v, q, nav), { page: 'playground', full: true });
+    r.add('/code', (v, p, q) => MV.codelab.renderList(v, q), { page: 'code' });
+    r.add('/code/:id', (v, p, q, nav) => MV.codelab.renderWorkspace(v, p, q, nav), { page: 'codelab', full: true });
     r.add('/challenges', (v, p, q) => MV.challenges.renderList(v, q), { page: 'challenges' });
     r.add('/challenge/:id', (v, p, q, nav) => MV.challenges.renderDetail(v, p, q, nav), { page: 'challenge' });
     r.add('/progress', (v, p, q) => MV.progress.renderProgress(v, q), { page: 'progress' });

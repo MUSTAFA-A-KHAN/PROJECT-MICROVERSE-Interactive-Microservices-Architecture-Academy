@@ -134,6 +134,7 @@ window.MV = window.MV || {};
   const NAV_PRACTICE = [
     { label: 'Architecture Lab', href: '#/lab', icon: 'workflow', match: (p) => p.startsWith('/lab'), pill: 'Live' },
     { label: 'Code Playground', href: '#/playground', icon: 'square-terminal', match: (p) => p.startsWith('/playground') },
+    { label: 'Code Lab', href: '#/code', icon: 'code-xml', match: (p) => p.startsWith('/code') },
     { label: 'Challenges', href: '#/challenges', icon: 'swords', match: (p) => p.startsWith('/challenge') },
   ];
   const NAV_YOU = [
@@ -173,7 +174,7 @@ window.MV = window.MV || {};
           }).join('')}
         </div>
         <div class="nav-group"><div class="nav-group-label">Practice</div>
-          ${NAV_PRACTICE.map((n) => navItem(n, n.pill ? `<span class="nav-meta"><span class="nav-pill">${n.pill}</span></span>` : n.href === '#/challenges' && totalCh ? `<span class="nav-meta"><span class="text-[11px] text-mutedc mono">${solved}/${totalCh}</span></span>` : '')).join('')}
+          ${NAV_PRACTICE.map((n) => navItem(n, n.pill ? `<span class="nav-meta"><span class="nav-pill">${n.pill}</span></span>` : n.href === '#/challenges' && totalCh ? `<span class="nav-meta"><span class="text-[11px] text-mutedc mono">${solved}/${totalCh}</span></span>` : n.href === '#/code' && MV.codelab ? `<span class="nav-meta"><span class="text-[11px] text-mutedc mono">${MV.codelab.solvedCount()}/${MV.data.exercises.length}</span></span>` : '')).join('')}
         </div>
         <div class="nav-group"><div class="nav-group-label">You</div>${NAV_YOU.map((n) => navItem(n)).join('')}</div>
       </nav>
@@ -306,6 +307,8 @@ window.MV = window.MV || {};
     page('Learning Path — 3-hour bootcamp', '#/path', 'route', 'Six guided 30-minute sessions');
     page('Architecture Lab', '#/lab', 'workflow', 'Simulate requests and inject failures', 'simulator canvas failure chaos');
     page('Code Playground', '#/playground', 'square-terminal', 'Browse the Order Management System source', 'files go code');
+    page('Code Lab — Go exercises', '#/code', 'code-xml', 'Write Go and run real tests', 'exercises coding editor write run compile tests practice');
+    page('Go scratchpad', '#/code/scratch', 'square-terminal', 'Edit and run a free-form Go program', 'editor run go playground repl');
     page('Engineering Challenges', '#/challenges', 'swords', 'Scenario-based problems', 'scenarios');
     page('Progress', '#/progress', 'chart-no-axes-column', 'Lessons, quizzes, bookmarks, weak concepts');
     page('Knowledge Check', '#/assessment', 'clipboard-check', 'Assessment with personalised recommendations', 'test exam assessment');
@@ -314,6 +317,7 @@ window.MV = window.MV || {};
     MV.catalog.modules.forEach((m) => items.push({ group: 'Modules', title: `${m.num} · ${m.title}`, route: `#/module/${m.id}`, icon: m.icon, sub: m.summary, kw: m.nav }));
     MV.catalog.lessons.forEach((l) => items.push({ group: 'Lessons', title: l.title, route: l.route, icon: 'book-open', sub: `${l.module.num} ${l.module.nav} · ${l.summary}`, kw: (l.concepts || []).join(' '), lessonKey: l.key }));
     (MV.data.bootcamp || []).forEach((s) => items.push({ group: 'Bootcamp', title: `Session ${s.num}: ${s.title}`, route: `#/bootcamp/${s.id}`, icon: 'timer', sub: s.summary }));
+    (MV.data.exercises || []).forEach((x) => items.push({ group: 'Exercises', title: x.title, route: `#/code/${x.id}`, icon: 'code-xml', sub: `${x.level} · ${x.summary}`, kw: `exercise code go ${(x.concepts || []).join(' ')}` }));
     (MV.data.challenges || []).forEach((c) => items.push({ group: 'Challenges', title: c.title, route: `#/challenge/${c.id}`, icon: 'swords', sub: `${c.level} · ${c.tagline}`, kw: (c.concepts || []).join(' ') }));
     ((MV.data.codebase && MV.data.codebase.files) || []).forEach((f) => items.push({ group: 'Source files', title: f.path, route: `#/playground?file=${encodeURIComponent(f.path)}`, icon: 'file-code-2', sub: f.summary, kw: f.service }));
 
@@ -446,7 +450,7 @@ window.MV = window.MV || {};
      ====================================================================== */
   const shortcuts = { page: {} };
   let gPending = false, gTimer = null;
-  const GO = { d: '#/', p: '#/path', l: '#/lab', o: '#/playground', c: '#/challenges', r: '#/progress', a: '#/assessment', m: '#/modules' };
+  const GO = { d: '#/', p: '#/path', l: '#/lab', o: '#/playground', e: '#/code', c: '#/challenges', r: '#/progress', a: '#/assessment', m: '#/modules' };
 
   function isTyping(e) {
     const t = e.target;
@@ -461,11 +465,13 @@ window.MV = window.MV || {};
       body: `<div class="eyebrow mt-1 mb-1">Global</div>
         ${row([MOD, 'K'], 'Command palette & search')}${row(['/'], 'Search')}${row(['['], 'Toggle sidebar')}${row(['T'], 'Toggle theme')}${row(['?'], 'Show this dialog')}
         <div class="eyebrow mt-4 mb-1">Go to</div>
-        ${row(['G', 'D'], 'Dashboard')}${row(['G', 'P'], 'Learning path')}${row(['G', 'M'], 'All modules')}${row(['G', 'L'], 'Architecture Lab')}${row(['G', 'O'], 'Code Playground')}${row(['G', 'C'], 'Challenges')}${row(['G', 'R'], 'Progress')}${row(['G', 'A'], 'Knowledge check')}
+        ${row(['G', 'D'], 'Dashboard')}${row(['G', 'P'], 'Learning path')}${row(['G', 'M'], 'All modules')}${row(['G', 'L'], 'Architecture Lab')}${row(['G', 'O'], 'Code Playground')}${row(['G', 'E'], 'Code Lab exercises')}${row(['G', 'C'], 'Challenges')}${row(['G', 'R'], 'Progress')}${row(['G', 'A'], 'Knowledge check')}
         <div class="eyebrow mt-4 mb-1">Lessons</div>
         ${row(['N'], 'Next lesson')}${row(['P'], 'Previous lesson')}${row(['M'], 'Mark lesson complete')}${row(['B'], 'Bookmark')}
         <div class="eyebrow mt-4 mb-1">Architecture Lab</div>
-        ${row(['Space'], 'Simulate request')}${row(['F'], 'Fit diagram to view')}${row(['←', '↑', '→', '↓'], 'Move the focused node')}`,
+        ${row(['Space'], 'Simulate request')}${row(['F'], 'Fit diagram to view')}${row(['←', '↑', '→', '↓'], 'Move the focused node')}
+        <div class="eyebrow mt-4 mb-1">Code editor</div>
+        ${row([MOD, 'Enter'], 'Run code / tests')}${row(['Shift', 'Alt', 'F'], 'Format with gofmt')}${row([MOD, '/'], 'Toggle comment')}${row([MOD, 'S'], 'Save now')}${row(['Esc', 'Tab'], 'Leave the editor')}`,
     });
   }
 

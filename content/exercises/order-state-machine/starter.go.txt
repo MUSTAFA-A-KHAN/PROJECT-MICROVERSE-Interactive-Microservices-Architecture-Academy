@@ -1,0 +1,40 @@
+package main
+
+import "errors"
+
+type Status string
+
+const (
+	Pending   Status = "PENDING"
+	Confirmed Status = "CONFIRMED"
+	Shipped   Status = "SHIPPED"
+	Delivered Status = "DELIVERED"
+	Cancelled Status = "CANCELLED"
+)
+
+var ErrInvalidTransition = errors.New("invalid status transition")
+
+type Order struct {
+	ID      int
+	Status  Status
+	Version int // incremented on every change (optimistic concurrency)
+}
+
+// CanTransition reports whether an order may move from → to.
+// Allowed: PENDING→CONFIRMED, PENDING→CANCELLED, CONFIRMED→SHIPPED,
+// CONFIRMED→CANCELLED, SHIPPED→DELIVERED. Everything else is illegal.
+func CanTransition(from, to Status) bool {
+	// TODO: encode the lifecycle as data (a map), not a tangle of ifs
+	return false
+}
+
+// Transition moves o to `to` and increments o.Version.
+//   - Moving to the status it already has is a no-op: return nil, no version bump
+//     (this makes "cancel" idempotent for retried requests).
+//   - Illegal moves return an error that wraps ErrInvalidTransition and
+//     mentions both statuses; o must stay unchanged.
+func Transition(o *Order, to Status) error {
+	// TODO
+	o.Status = to
+	return nil
+}

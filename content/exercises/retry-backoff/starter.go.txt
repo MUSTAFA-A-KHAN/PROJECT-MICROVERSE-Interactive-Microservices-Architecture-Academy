@@ -1,0 +1,36 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// ErrBadRequest is permanent: retrying it can never succeed.
+var ErrBadRequest = errors.New("bad request")
+
+// Backoff returns the maximum wait before retry number `attempt` (1-based):
+// base × 2^(attempt-1), capped at max. Example with base=100ms, max=1s:
+// 100ms, 200ms, 400ms, 800ms, 1s, 1s, …
+func Backoff(attempt int, base, max time.Duration) time.Duration {
+	// TODO
+	return 0
+}
+
+// Retry calls op up to maxAttempts times.
+//   - Stop immediately on success, on an error wrapping ErrBadRequest,
+//     or when ctx is done.
+//   - Between attempts, wait jitter(Backoff(attempt, base, max)) using sleep.
+//     (jitter and sleep are injected so tests don't actually sleep; in
+//     production jitter returns a random duration in [0, d] and sleep waits
+//     on a timer or ctx.Done().)
+//   - If sleep returns an error (ctx ended), return it.
+//   - After the last failed attempt return an error that wraps the last
+//     error and says how many attempts were made: "after 3 attempts: <err>".
+func Retry(ctx context.Context, maxAttempts int, base, max time.Duration,
+	jitter func(time.Duration) time.Duration,
+	sleep func(context.Context, time.Duration) error,
+	op func() error) error {
+	// TODO
+	return op()
+}

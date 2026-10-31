@@ -1,0 +1,99 @@
+package main
+
+import (
+	"errors"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+func created(id string) func() (Response, error) {
+	return func() (Response, error) { return Response{Status: 201, Body: id}, nil }
+}
+
+func main() {
+	runTests([]testCase{
+		{"first call runs the operation", func(t *T) {
+			var s Store
+			resp, replayed, err := s.Do("k1", "h1", created("ord_1"))
+			if err != nil || replayed || resp.Status != 201 || resp.Body != "ord_1" {
+				t.Errorf("got (%+v, replayed=%v, %v), want ({201 ord_1}, false, nil)", resp, replayed, err)
+			}
+		}},
+		{"a retry replays the stored response", func(t *T) {
+			var s Store
+			calls := 0
+			op := func() (Response, error) { calls++; return Response{Status: 201, Body: "ord_1"}, nil }
+			s.Do("k1", "h1", op)
+			resp, replayed, err := s.Do("k1", "h1", op)
+			if calls != 1 {
+				t.Errorf("operation ran %d times, want 1", calls)
+			}
+			if err != nil || !replayed || resp.Body != "ord_1" {
+				t.Errorf("retry got (%+v, replayed=%v, %v), want stored response with replayed=true", resp, replayed, err)
+			}
+		}},
+		{"same key with a different body is rejected", func(t *T) {
+			var s Store
+			s.Do("k1", "h1", created("ord_1"))
+			_, _, err := s.Do("k1", "DIFFERENT", created("ord_2"))
+			if !errors.Is(err, ErrKeyReused) {
+				t.Errorf("err = %v, want ErrKeyReused", err)
+			}
+		}},
+		{"a failed attempt can be retried", func(t *T) {
+			var s Store
+			_, _, err := s.Do("k1", "h1", func() (Response, error) { return Response{}, errors.New("db down") })
+			if err == nil {
+				t.Fatalf("expected the operation's error to be returned")
+			}
+			resp, replayed, err := s.Do("k1", "h1", created("ord_1"))
+			if err != nil || replayed || resp.Body != "ord_1" {
+				t.Errorf("retry after failure got (%+v, replayed=%v, %v), want a fresh run", resp, replayed, err)
+			}
+		}},
+		{"concurrent duplicates run the operation once", func(t *T) {
+			var s Store
+			var calls atomic.Int64
+			op := func() (Response, error) {
+				calls.Add(1)
+				time.Sleep(50 * time.Millisecond)
+				return Response{Status: 201, Body: "ord_1"}, nil
+			}
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			bodies := map[string]int{}
+			for i := 0; i < 30; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					resp, _, _ := s.Do("double-click", "h1", op)
+					mu.Lock()
+					bodies[resp.Body]++
+					mu.Unlock()
+				}()
+			}
+			wg.Wait()
+			if calls.Load() != 1 {
+				t.Errorf("operation ran %d times for 30 duplicates, want 1", calls.Load())
+			}
+			if bodies["ord_1"] != 30 {
+				t.Errorf("not every caller got the same response: %v", bodies)
+			}
+		}},
+		{"different keys don't block each other", func(t *T) {
+			var s Store
+			slow := func() (Response, error) { time.Sleep(200 * time.Millisecond); return Response{Status: 201}, nil }
+			start := time.Now()
+			var wg sync.WaitGroup
+			for _, k := range []string{"a", "b", "c"} {
+				wg.Add(1)
+				go func(k string) { defer wg.Done(); s.Do(k, "h", slow) }(k)
+			}
+			wg.Wait()
+			if el := time.Since(start); el > 450*time.Millisecond {
+				t.Errorf("3 keys × 200ms took %v — is a lock held while the operation runs?", el.Round(time.Millisecond))
+			}
+		}},
+	})
+}

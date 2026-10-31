@@ -1,0 +1,57 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+func main() {
+	runTests([]testCase{
+		{"FindOrder wraps ErrNotFound", func(t *T) {
+			err := FindOrder(42)
+			if err == nil {
+				t.Fatalf("FindOrder(42) returned nil")
+			}
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("errors.Is(err, ErrNotFound) = false; did you use %%w? got %q", err)
+			}
+			if !strings.Contains(err.Error(), "42") {
+				t.Errorf("error %q should mention the id 42", err)
+			}
+		}},
+		{"nil error → 200", func(t *T) {
+			if got := StatusFor(nil); got != 200 {
+				t.Errorf("StatusFor(nil) = %d, want 200", got)
+			}
+		}},
+		{"wrapped not-found → 404", func(t *T) {
+			err := fmt.Errorf("handler: %w", fmt.Errorf("find order 7: %w", ErrNotFound))
+			if got := StatusFor(err); got != 404 {
+				t.Errorf("StatusFor(%q) = %d, want 404", err, got)
+			}
+		}},
+		{"wrapped invalid transition → 409", func(t *T) {
+			err := fmt.Errorf("cancel order 9: %w", ErrInvalidTransition)
+			if got := StatusFor(err); got != 409 {
+				t.Errorf("StatusFor = %d, want 409", got)
+			}
+		}},
+		{"validation error anywhere in the chain → 422", func(t *T) {
+			err := fmt.Errorf("create order: %w", &ValidationError{Field: "currency", Reason: "must be 3 letters"})
+			if got := StatusFor(err); got != 422 {
+				t.Errorf("StatusFor = %d, want 422 (use errors.As)", got)
+			}
+		}},
+		{"unknown error → 500", func(t *T) {
+			if got := StatusFor(errors.New("connection reset by peer")); got != 500 {
+				t.Errorf("StatusFor = %d, want 500", got)
+			}
+		}},
+		{"a look-alike message is not ErrNotFound", func(t *T) {
+			if got := StatusFor(errors.New("order not found")); got != 500 {
+				t.Errorf("StatusFor(errors.New(\"order not found\")) = %d, want 500 — compare errors with errors.Is, not by text", got)
+			}
+		}},
+	})
+}

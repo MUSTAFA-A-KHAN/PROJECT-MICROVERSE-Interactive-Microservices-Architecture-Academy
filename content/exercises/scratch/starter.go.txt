@@ -1,0 +1,53 @@
+// Scratchpad: a free-form Go program. Edit anything, then press Run (Ctrl+Enter).
+// Standard library only: there's no network access and no third-party modules.
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+)
+
+type Order struct {
+	ID    string
+	Total float64
+}
+
+// fetchPrice pretends to call a pricing service that takes a while.
+func fetchPrice(ctx context.Context, id string) (float64, error) {
+	select {
+	case <-time.After(time.Duration(len(id)*20) * time.Millisecond):
+		return float64(len(id)) * 9.99, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	ids := []string{"ord_1", "ord_22", "ord_333", "ord_4444_slow"}
+	results := make([]Order, len(ids))
+	errs := make([]error, len(ids))
+
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			price, err := fetchPrice(ctx, id)
+			results[i], errs[i] = Order{ID: id, Total: price}, err
+		}()
+	}
+	wg.Wait()
+
+	for i, o := range results {
+		if errs[i] != nil {
+			fmt.Printf("%-14s error: %v\n", o.ID, errs[i])
+			continue
+		}
+		fmt.Printf("%-14s $%.2f\n", o.ID, o.Total)
+	}
+}

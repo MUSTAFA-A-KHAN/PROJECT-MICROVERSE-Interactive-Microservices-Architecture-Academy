@@ -142,7 +142,7 @@ window.MV = window.MV || {};
       } else el.remove();
     };
     if (window.Motion && !MV.reducedMotion) {
-      Motion.animate(el, { opacity: [0, 1], transform: ['translateY(12px) scale(0.97)', 'none'] }, { type: 'spring', bounce: 0.25, duration: 0.45 });
+      Motion.animate(el, { opacity: [0, 1], transform: ['translateY(12px) scale(0.97)', 'translateY(0px) scale(1)'] }, { type: 'spring', bounce: 0.25, duration: 0.45 });
     }
     $('.toast-close', el).addEventListener('click', remove);
     if (opts.action) $('.toast-action button', el).addEventListener('click', () => { opts.action.onClick(); remove(); });
@@ -169,7 +169,7 @@ window.MV = window.MV || {};
     const panel = $('.dialog', scrim);
     if (window.Motion && !MV.reducedMotion) {
       Motion.animate(scrim, { opacity: [0, 1] }, { duration: 0.15 });
-      Motion.animate(panel, { opacity: [0, 1], transform: ['translateY(8px) scale(0.98)', 'none'] }, { type: 'spring', bounce: 0.2, duration: 0.35 });
+      Motion.animate(panel, { opacity: [0, 1], transform: ['translateY(8px) scale(0.98)', 'translateY(0px) scale(1)'] }, { type: 'spring', bounce: 0.2, duration: 0.35 });
     }
     const close = (result) => {
       if (!scrim.isConnected) return;
@@ -232,7 +232,7 @@ window.MV = window.MV || {};
     if (top + h > window.innerHeight - 12) top = Math.max(12, r.top - h - 6);
     el.style.left = left + 'px';
     el.style.top = top + 'px';
-    if (window.Motion && !MV.reducedMotion) Motion.animate(el, { opacity: [0, 1], transform: ['translateY(-4px) scale(0.98)', 'none'] }, { duration: 0.16 });
+    if (window.Motion && !MV.reducedMotion) Motion.animate(el, { opacity: [0, 1], transform: ['translateY(-4px) scale(0.98)', 'translateY(0px) scale(1)'] }, { duration: 0.16 });
     anchor.setAttribute('aria-expanded', 'true');
     const onDoc = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) closePopover(); };
     const onKey = (e) => {

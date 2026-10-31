@@ -1,0 +1,34 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+var ErrCompensationFailed = errors.New("compensation failed")
+
+// Step is one local transaction in a saga, with the action that undoes it.
+type Step struct {
+	Name       string
+	Action     func(ctx context.Context) error
+	Compensate func(ctx context.Context) error // nil when there is nothing to undo
+}
+
+// Run executes the steps in order. If a step fails (or ctx is cancelled before
+// it starts), Run compensates every step that already COMPLETED, newest first,
+// and returns an error that:
+//   - wraps the failing step's error and names the step
+//   - also wraps ErrCompensationFailed if a compensation still fails after
+//     3 attempts (keep compensating the remaining steps anyway)
+//
+// Compensations must run even when ctx was cancelled.
+func Run(ctx context.Context, steps []Step) error {
+	for _, s := range steps {
+		if err := s.Action(ctx); err != nil {
+			// TODO: nothing is undone — stock stays reserved and the card stays charged.
+			return fmt.Errorf("saga step %q: %w", s.Name, err)
+		}
+	}
+	return nil
+}

@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+var ErrCompensationFailed = errors.New("compensation failed")
+
+type Step struct {
+	Name       string
+	Action     func(ctx context.Context) error
+	Compensate func(ctx context.Context) error
+}
+
+const compensationAttempts = 3
+
+func Run(ctx context.Context, steps []Step) error {
+	for i, s := range steps {
+		err := ctx.Err() // don't start new work for a cancelled request
+		if err == nil {
+			err = s.Action(ctx)
+		}
+		if err != nil {
+			stepErr := fmt.Errorf("saga step %q: %w", s.Name, err)
+			// Undo must finish even if the caller has gone away.
+			return errors.Join(stepErr, compensate(context.WithoutCancel(ctx), steps[:i]))
+		}
+	}
+	return nil
+}
+
+// compensate undoes completed steps newest-first and reports the ones that
+// could not be undone — those need an operator or a reconciliation job.
+func compensate(ctx context.Context, done []Step) error {
+	var errs []error
+	for i := len(done) - 1; i >= 0; i-- {
+		s := done[i]
+		if s.Compensate == nil {
+			continue
+		}
+		var err error
+		for attempt := 1; attempt <= compensationAttempts; attempt++ {
+			if err = s.Compensate(ctx); err == nil {
+				break
+			}
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("compensate %q: %w: %w", s.Name, ErrCompensationFailed, err))
+		}
+	}
+	return errors.Join(errs...)
+}

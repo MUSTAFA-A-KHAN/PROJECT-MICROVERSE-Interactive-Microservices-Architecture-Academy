@@ -1,0 +1,159 @@
+// support.go — provided: a tiny in-memory database with transactions.
+// Read it, use it, don't change it (the tests rely on it).
+package main
+
+import (
+	"errors"
+	"fmt"
+	"sync"
+)
+
+type Order struct {
+	ID         string
+	UserID     int64
+	TotalCents int64
+}
+
+type OutboxRow struct {
+	ID        int
+	Topic     string
+	Payload   string
+	Published bool
+}
+
+var (
+	ErrInjected = errors.New("injected failure")
+	ErrTxClosed = errors.New("transaction already committed or rolled back")
+)
+
+type DB struct {
+	mu     sync.Mutex
+	orders map[string]Order
+	outbox []OutboxRow
+	open   int
+
+	// Failure injection used by the tests.
+	FailOrderInsert, FailOutboxInsert, FailCommit bool
+}
+
+func NewDB() *DB { return &DB{orders: map[string]Order{}} }
+
+// Tx buffers writes; nothing is visible until Commit succeeds.
+type Tx struct {
+	db     *DB
+	orders []Order
+	outbox []OutboxRow
+	closed bool
+}
+
+func (db *DB) Begin() *Tx {
+	db.mu.Lock()
+	db.open++
+	db.mu.Unlock()
+	return &Tx{db: db}
+}
+
+func (tx *Tx) InsertOrder(o Order) error {
+	if tx.closed {
+		return ErrTxClosed
+	}
+	if tx.db.FailOrderInsert {
+		return fmt.Errorf("insert order: %w", ErrInjected)
+	}
+	tx.orders = append(tx.orders, o)
+	return nil
+}
+
+func (tx *Tx) InsertOutbox(topic, payload string) error {
+	if tx.closed {
+		return ErrTxClosed
+	}
+	if tx.db.FailOutboxInsert {
+		return fmt.Errorf("insert outbox: %w", ErrInjected)
+	}
+	tx.outbox = append(tx.outbox, OutboxRow{Topic: topic, Payload: payload})
+	return nil
+}
+
+// Commit applies every buffered write atomically.
+func (tx *Tx) Commit() error {
+	if tx.closed {
+		return ErrTxClosed
+	}
+	tx.close()
+	if tx.db.FailCommit {
+		return fmt.Errorf("commit: %w", ErrInjected)
+	}
+	db := tx.db
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for _, o := range tx.orders {
+		db.orders[o.ID] = o
+	}
+	for _, r := range tx.outbox {
+		r.ID = len(db.outbox) + 1
+		db.outbox = append(db.outbox, r)
+	}
+	return nil
+}
+
+// Rollback discards the writes. It is a no-op after Commit, so
+// `defer tx.Rollback()` is always safe.
+func (tx *Tx) Rollback() {
+	if !tx.closed {
+		tx.close()
+	}
+}
+
+func (tx *Tx) close() {
+	tx.closed = true
+	tx.db.mu.Lock()
+	tx.db.open--
+	tx.db.mu.Unlock()
+}
+
+// Order looks up a committed order.
+func (db *DB) Order(id string) (Order, bool) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	o, ok := db.orders[id]
+	return o, ok
+}
+
+// Pending returns up to limit unpublished outbox rows, oldest first.
+func (db *DB) Pending(limit int) []OutboxRow {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var rows []OutboxRow
+	for _, r := range db.outbox {
+		if !r.Published && len(rows) < limit {
+			rows = append(rows, r)
+		}
+	}
+	return rows
+}
+
+// MarkPublished flags a row as sent.
+func (db *DB) MarkPublished(id int) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if id < 1 || id > len(db.outbox) {
+		return fmt.Errorf("outbox row %d not found", id)
+	}
+	db.outbox[id-1].Published = true
+	return nil
+}
+
+// Outbox returns a copy of every row, for inspection.
+func (db *DB) Outbox() []OutboxRow {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return append([]OutboxRow(nil), db.outbox...)
+}
+
+// OpenTx counts transactions that were begun but never committed or rolled back.
+func (db *DB) OpenTx() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.open
+}

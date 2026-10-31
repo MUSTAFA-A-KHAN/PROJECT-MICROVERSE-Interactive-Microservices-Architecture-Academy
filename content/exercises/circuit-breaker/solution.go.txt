@@ -1,0 +1,88 @@
+package main
+
+import (
+	"errors"
+	"sync"
+	"time"
+)
+
+type State int
+
+const (
+	Closed State = iota
+	Open
+	HalfOpen
+)
+
+var ErrOpen = errors.New("circuit breaker is open")
+
+type Breaker struct {
+	Threshold int
+	Cooldown  time.Duration
+	Now       func() time.Time
+
+	mu       sync.Mutex
+	state    State
+	failures int
+	openedAt time.Time
+	probing  bool
+}
+
+// refresh moves OPEN → HALF-OPEN once the cooldown has elapsed. Caller holds mu.
+func (b *Breaker) refresh() {
+	if b.state == Open && b.Now().Sub(b.openedAt) >= b.Cooldown {
+		b.state = HalfOpen
+		b.probing = false
+	}
+}
+
+func (b *Breaker) Allow() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refresh()
+	switch b.state {
+	case Open:
+		return ErrOpen
+	case HalfOpen:
+		if b.probing {
+			return ErrOpen // one probe at a time
+		}
+		b.probing = true
+	}
+	return nil
+}
+
+func (b *Breaker) Record(failed bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state == HalfOpen {
+		b.probing = false
+		if failed {
+			b.trip()
+		} else {
+			b.state, b.failures = Closed, 0
+		}
+		return
+	}
+	if !failed {
+		b.failures = 0
+		return
+	}
+	b.failures++
+	if b.failures >= b.Threshold {
+		b.trip()
+	}
+}
+
+func (b *Breaker) trip() {
+	b.state = Open
+	b.openedAt = b.Now()
+	b.failures = 0
+}
+
+func (b *Breaker) State() State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refresh()
+	return b.state
+}

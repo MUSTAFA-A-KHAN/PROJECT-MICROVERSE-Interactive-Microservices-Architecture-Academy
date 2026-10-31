@@ -1,0 +1,53 @@
+package main
+
+import (
+	"encoding/json"
+)
+
+// OrderCreated is the event payload, published as JSON.
+type OrderCreated struct {
+	OrderID    string `json:"order_id"`
+	UserID     int64  `json:"user_id"`
+	TotalCents int64  `json:"total_cents"`
+}
+
+// Publisher sends one message to the broker.
+type Publisher func(topic, payload string) error
+
+// CreateOrder must save the order AND its "order.created" outbox row in ONE
+// transaction, so either both exist or neither does.
+func CreateOrder(db *DB, o Order) error {
+	// TODO: this is the dual-write bug — two transactions. If the second one
+	// fails, the order exists but no event will ever be published.
+	tx := db.Begin()
+	if err := tx.InsertOrder(o); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	payload, _ := json.Marshal(OrderCreated{OrderID: o.ID, UserID: o.UserID, TotalCents: o.TotalCents})
+	tx2 := db.Begin()
+	if err := tx2.InsertOutbox("order.created", string(payload)); err != nil {
+		tx2.Rollback()
+		return err
+	}
+	return tx2.Commit()
+}
+
+// PublishPending is the relay. It publishes up to batch pending rows in order,
+// marks each one published only AFTER the broker accepted it, and stops at the
+// first failure (so events are never delivered out of order). It returns how
+// many rows were published.
+func PublishPending(db *DB, batch int, publish Publisher) (int, error) {
+	// TODO: errors are ignored and every row is marked published — when the
+	// broker is down, events are silently lost.
+	rows := db.Pending(batch)
+	for _, r := range rows {
+		publish(r.Topic, r.Payload)
+		db.MarkPublished(r.ID)
+	}
+	return len(rows), nil
+}
