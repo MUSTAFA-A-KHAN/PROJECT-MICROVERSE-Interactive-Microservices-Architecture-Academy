@@ -8,7 +8,9 @@
     "start": "node tools/serve.mjs 5173",
     "icons": "node tools/build-icons.mjs",
     "check": "node tools/check-content.mjs",
-    "exercises": "node tools/check-exercises.mjs"
+    "exercises": "node tools/check-exercises.mjs",
+    "build:wasm": "node tools/build-wasm.mjs",
+    "check:runner": "node tools/check-runner.mjs"
   },
   "engines": {
     "node": ">=18"

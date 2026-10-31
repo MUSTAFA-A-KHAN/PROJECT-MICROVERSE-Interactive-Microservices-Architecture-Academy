@@ -1,0 +1,81 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+func producer(ctx context.Context, n int) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out)
+		for i := range n {
+			select {
+			case out <- i * i:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	sum := 0
+	for v := range producer(ctx, 5) {
+		sum += v
+	}
+	cancel()
+	fmt.Println("sum of squares:", sum)
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var hits atomic.Int64
+	seen := map[int]bool{}
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hits.Add(1)
+			mu.Lock()
+			seen[i%5] = true
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	keys := make([]int, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	fmt.Println("hits:", hits.Load(), "keys:", keys)
+
+	timeout, stop := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer stop()
+	select {
+	case <-time.After(time.Second):
+		fmt.Println("slow")
+	case <-timeout.Done():
+		fmt.Println("deadline:", timeout.Err())
+	}
+
+	results := make(chan string, 3)
+	var once sync.Once
+	for _, name := range []string{"a", "b", "c"} {
+		go func() {
+			once.Do(func() { results <- "first" })
+			results <- name
+		}()
+	}
+	got := []string{}
+	for i := 0; i < 4; i++ {
+		got = append(got, <-results)
+	}
+	sort.Strings(got)
+	fmt.Println(got)
+}

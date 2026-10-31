@@ -1,0 +1,157 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+type Animal interface {
+	Sound() string
+}
+
+type Base struct{ Name string }
+
+func (b Base) Describe() string { return "I am " + b.Name }
+
+type Dog struct {
+	Base
+	Age int `json:"age"`
+}
+
+func (d Dog) Sound() string { return "woof" }
+
+type Order struct {
+	ID    string   `json:"id"`
+	Items []string `json:"items,omitempty"`
+	Total int64    `json:"total_cents"`
+	note  string
+}
+
+type Celsius float64
+
+func (c Celsius) String() string { return fmt.Sprintf("%.1f°C", float64(c)) }
+
+type Number interface{ ~int | ~float64 }
+
+func Sum[T Number](xs []T) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func Map[T, U any](xs []T, f func(T) U) []U {
+	out := make([]U, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+type Stack[T any] struct{ items []T }
+
+func (s *Stack[T]) Push(v T) { s.items = append(s.items, v) }
+func (s *Stack[T]) Pop() (T, bool) {
+	var zero T
+	if len(s.items) == 0 {
+		return zero, false
+	}
+	v := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return v, true
+}
+
+func classify(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "nil"
+	case int:
+		return fmt.Sprintf("int %d", x)
+	case string:
+		return "string " + strings.ToUpper(x)
+	case error:
+		return "error " + x.Error()
+	case fmt.Stringer:
+		return "stringer " + x.String()
+	default:
+		return fmt.Sprintf("other %T", x)
+	}
+}
+
+func divide(a, b int) (q int, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("recovered: %v", r)
+		}
+	}()
+	return a / b, nil
+}
+
+func main() {
+	d := Dog{Base: Base{Name: "Rex"}, Age: 3}
+	var a Animal = d
+	fmt.Println(d.Describe(), a.Sound(), d.Name)
+
+	b, _ := json.Marshal(Order{ID: "o1", Total: 1999, note: "x"})
+	fmt.Println(string(b))
+	var o Order
+	err := json.Unmarshal([]byte(`{"id":"o2","items":["a","b"],"total_cents":5}`), &o)
+	fmt.Println(o.ID, o.Items, o.Total, err)
+	db, _ := json.Marshal(d)
+	fmt.Println(string(db))
+
+	fmt.Println(Celsius(21.5))
+	fmt.Println(Sum([]int{1, 2, 3}), Sum([]float64{1.5, 2}))
+	fmt.Println(Map([]int{1, 2, 3}, func(i int) string { return strings.Repeat("*", i) }))
+	var s Stack[string]
+	s.Push("x")
+	s.Push("y")
+	v, ok := s.Pop()
+	fmt.Println(v, ok)
+
+	fmt.Println(classify(nil), "|", classify(7), "|", classify("go"), "|", classify(errors.New("bad")), "|", classify(Celsius(3)), "|", classify(3.5))
+	fmt.Println(divide(7, 2))
+	fmt.Println(divide(1, 0))
+
+	people := []struct {
+		Name string
+		Age  int
+	}{{"Ann", 30}, {"Bob", 25}, {"Cid", 30}}
+	sort.SliceStable(people, func(i, j int) bool { return people[i].Age < people[j].Age })
+	fmt.Println(people)
+
+	m := map[string][]int{}
+	m["a"] = append(m["a"], 1, 2)
+	fmt.Println(len(m["a"]), m["zz"] == nil)
+
+	const (
+		Pending = iota
+		Paid
+		Shipped
+	)
+	fmt.Println(Pending, Paid, Shipped)
+
+outer:
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			if j == 2 {
+				continue outer
+			}
+			if i == 2 {
+				break outer
+			}
+			fmt.Print(i, j, " ")
+		}
+	}
+	fmt.Println()
+	for i, r := range "héllo" {
+		fmt.Print(i, ":", string(r), " ")
+	}
+	fmt.Println()
+	fn := d.Sound
+	fmt.Println(fn(), fmt.Sprintf("%v %v", d, o))
+}

@@ -1,6 +1,6 @@
 // testkit.go — the tiny test runner used by every Microverse exercise.
 // It is compiled alongside your exercise.go and the exercise's tests.
-// Avoid declaring these names in your code: T, testCase, runTests, fatal.
+// Avoid declaring these names in your code: T, testCase, runTests.
 package main
 
 import (
@@ -12,8 +12,9 @@ import (
 
 // T mirrors the parts of testing.T the exercises use.
 type T struct {
-	failed bool
-	msgs   []string
+	failed  bool
+	stopped bool // set by Fatalf, which ends the test with a panic
+	msgs    []string
 }
 
 func (t *T) Errorf(format string, args ...any) {
@@ -23,10 +24,9 @@ func (t *T) Errorf(format string, args ...any) {
 
 func (t *T) Fatalf(format string, args ...any) {
 	t.Errorf(format, args...)
-	panic(fatal{})
+	t.stopped = true
+	panic("test stopped by Fatalf")
 }
-
-type fatal struct{}
 
 type testCase struct {
 	name string
@@ -46,10 +46,8 @@ func runTests(tests []testCase) {
 		}()
 		select {
 		case r := <-done:
-			if r != nil {
-				if _, ok := r.(fatal); !ok {
-					t.Errorf("panic: %v", r)
-				}
+			if r != nil && !t.stopped {
+				t.Errorf("panic: %v", r)
 			}
 		case <-time.After(3 * time.Second):
 			t.Errorf("timed out after 3s — a deadlock, or a goroutine that never returns?")

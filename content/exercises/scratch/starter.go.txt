@@ -17,7 +17,7 @@ type Order struct {
 // fetchPrice pretends to call a pricing service that takes a while.
 func fetchPrice(ctx context.Context, id string) (float64, error) {
 	select {
-	case <-time.After(time.Duration(len(id)*20) * time.Millisecond):
+	case <-time.After(time.Duration(len(id)*15) * time.Millisecond):
 		return float64(len(id)) * 9.99, nil
 	case <-ctx.Done():
 		return 0, ctx.Err()

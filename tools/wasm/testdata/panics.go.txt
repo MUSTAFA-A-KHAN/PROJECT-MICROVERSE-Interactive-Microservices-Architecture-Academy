@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+type node struct{ next *node }
+
+func main() {
+	defer fmt.Println("deferred before crash")
+	xs := []int{1, 2, 3}
+	i := 5
+	fmt.Println("about to index")
+	fmt.Println(xs[i])
+}

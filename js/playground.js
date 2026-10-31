@@ -6,10 +6,11 @@
 
    The source shown is the real code in codebase/order-management/ (it
    compiles and its tests pass). Nothing is executed in the browser.
-   Edit mode keeps changed .go files as drafts in this browser; "Build & test"
-   asks the local dev server to copy the service to a temporary folder, apply
-   the drafts and run go build / go vet / go test there. Repository files are
-   never written.
+   Edit mode keeps changed .go files as drafts in this browser. With the dev
+   server and Go installed, "Build & test" copies the service to a temporary
+   folder, applies the drafts and runs go build / go vet / go test there;
+   repository files are never written. Elsewhere (e.g. GitHub Pages) it
+   checks syntax in the browser and exports the drafts as a git patch.
    ========================================================================== */
 window.MV = window.MV || {};
 
@@ -51,6 +52,43 @@ window.MV = window.MV || {};
     return root;
   }
 
+  /**
+   * Unified diff (3 lines of context) of one file, in the format git apply
+   * reads. Line-based LCS: these files are a few hundred lines at most.
+   */
+  function unifiedDiff(path, before, after) {
+    const norm = (t) => (t.endsWith('\n') ? t.slice(0, -1) : t).split('\n');
+    const a = norm(before.replace(/\r\n/g, '\n')), b = norm(after.replace(/\r\n/g, '\n'));
+    const n = a.length, m = b.length;
+    const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    const ops = []; // [kind, text, aLine, bLine]
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i] === b[j]) { ops.push([' ', a[i], i, j]); i++; j++; }
+      else if (j < m && (i === n || lcs[i][j + 1] >= lcs[i + 1][j])) { ops.push(['+', b[j], i, j]); j++; }
+      else { ops.push(['-', a[i], i, j]); i++; }
+    }
+    // Each change brings CONTEXT lines either side; overlapping ranges merge into one hunk.
+    const CONTEXT = 3;
+    const ranges = [];
+    ops.forEach((o, k) => {
+      if (o[0] === ' ') return;
+      const from = Math.max(0, k - CONTEXT), to = Math.min(ops.length, k + CONTEXT + 1);
+      const last = ranges[ranges.length - 1];
+      if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+      else ranges.push([from, to]);
+    });
+    let out = '';
+    for (const [from, to] of ranges) {
+      const hunk = ops.slice(from, to);
+      const aCount = hunk.filter((o) => o[0] !== '+').length, bCount = hunk.filter((o) => o[0] !== '-').length;
+      const aStart = hunk[0][2] + (aCount ? 1 : 0), bStart = hunk[0][3] + (bCount ? 1 : 0);
+      out += `@@ -${aStart},${aCount} +${bStart},${bCount} @@\n` + hunk.map((o) => o[0] + o[1]).join('\n') + '\n';
+    }
+    return out ? `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${out}` : '';
+  }
+
   /** Find the 1-based line containing `needle` and the extent of the block it opens. */
   function locate(lines, needle) {
     const start = lines.findIndex((l) => l.includes(needle));
@@ -81,6 +119,8 @@ window.MV = window.MV || {};
       this.filter = '';
       this.collapsed = new Set();
       this.highlight = null;
+      this.inf = null;
+      MV.runner.info().then((inf) => { this.inf = inf; if (this.editMode && !this.disposed) this.renderPathbar(); });
       this.render();
       const file = query.file && byPath.has(query.file) ? query.file : null;
       if (query.trace) this.startTrace(query.trace, +(query.step || 1) - 1);
@@ -217,7 +257,10 @@ window.MV = window.MV || {};
       $('#pg-pathbar', this.view).innerHTML = editing
         ? `${crumbs}
           <span class="badge badge-warn ml-auto" data-tip="Your edits are saved in this browser only. Build & test compiles a temporary copy of ${esc(svc)}; files in codebase/ are never modified.">${icon('pencil', '', 12)}${hasDraft ? 'Edited copy' : 'Editing a copy'}</span>
-          <button class="btn btn-sm btn-primary" type="button" data-pg-build data-tip="go build, go vet and go test on a temporary copy (Ctrl+Enter)">${icon('hammer')}<span class="hide-sm">Build &amp; test</span></button>
+          ${this.inf && !this.inf.local.available
+            ? `<button class="btn btn-sm btn-primary" type="button" data-pg-build data-tip="Check your edits for syntax errors in the browser, and export them as a patch (Ctrl+Enter)">${icon('scan-search')}<span class="hide-sm">Check syntax</span></button>`
+            : `<button class="btn btn-sm btn-primary" type="button" data-pg-build data-tip="go build, go vet and go test on a temporary copy (Ctrl+Enter)">${icon('hammer')}<span class="hide-sm">Build &amp; test</span></button>`}
+          <button class="btn btn-ghost btn-sm btn-icon" type="button" data-pg-patch aria-label="Download your edits as a patch" data-tip="Download your edits as a git patch">${icon('download')}</button>
           ${hasDraft ? `<button class="btn btn-ghost btn-sm btn-icon" type="button" data-pg-revert aria-label="Revert this file" data-tip="Revert this file">${icon('undo-2')}</button>` : ''}
           <button class="btn btn-ghost btn-sm btn-icon" type="button" data-pg-copy aria-label="Copy file" data-tip="Copy file">${icon('copy')}</button>
           <button class="btn btn-sm" type="button" data-pg-edit>${icon('check')}Done</button>`
@@ -282,9 +325,7 @@ window.MV = window.MV || {};
       const bar = $('#pg-buildbar', this.view);
       bar.hidden = false;
       if (!inf.api || !inf.local.available) {
-        bar.innerHTML = `${this.buildHead(svc, serviceDrafts(svc).length)}<p class="pg-build-note">${!inf.api
-          ? 'Building needs the Microverse dev server (<span class="mono">npm run dev</span>). Your edits are saved in this browser in the meantime.'
-          : 'Building the services needs Go installed on this machine: the Go Playground cannot download Gin, pgx and the other modules these services use.'}</p>`;
+        await this.checkInBrowser(svc, inf);
         return;
       }
       const edits = Object.fromEntries(serviceDrafts(svc).map(([p, c]) => [p.slice(svc.length + 1), c]));
@@ -308,6 +349,75 @@ window.MV = window.MV || {};
         const failed = r.steps.find((st) => !st.ok);
         toast(r.ok ? `${svc} builds and all tests pass` : `${svc}: ${failed ? failed.cmd.split(' ').slice(0, 2).join(' ') : 'build'} failed`, { type: r.ok ? 'success' : 'error', desc: r.ok ? 'Built from a temporary copy with your edits.' : 'See the build panel under the editor.' });
       }
+    }
+
+    /**
+     * Without the dev server (e.g. on GitHub Pages) the services can't be
+     * built: they need the Go toolchain plus Gin, pgx and the RabbitMQ client.
+     * Check what the browser can check (syntax, via go/parser in the Go
+     * engine), and hand over a patch to build and test in a clone.
+     */
+    async checkInBrowser(svc, inf) {
+      const bar = $('#pg-buildbar', this.view);
+      const drafts = serviceDrafts(svc);
+      const why = inf.api
+        ? 'Building and testing the services needs Go installed on this machine (they depend on Gin, pgx and the RabbitMQ client).'
+        : 'Building and testing the services needs the Go toolchain and their dependencies (Gin, pgx, the RabbitMQ client), so it can\'t happen in a browser. Run <span class="mono">npm run dev</span> with Go installed to build here, or apply the patch in your clone.';
+      const head = (badge = '') => `<div class="pg-build-head">${icon('scan-search', '', 14)}<strong>${esc(svc)}</strong><span class="text-mutedc text-[12px]">syntax check in your browser · ${drafts.length} edited file${drafts.length === 1 ? '' : 's'}</span>${badge}<button class="btn btn-ghost btn-sm btn-icon ml-auto" type="button" data-pg-build-close aria-label="Close build results">${icon('x')}</button></div>`;
+      if (!drafts.length) {
+        bar.innerHTML = `${head()}<p class="pg-build-note">No edits to check yet. ${why}</p>`;
+        return;
+      }
+      if (!inf.browser.available) {
+        bar.innerHTML = `${head()}<p class="pg-build-note">${why}</p>${this.patchButton()}`;
+        return;
+      }
+      this.building = true;
+      bar.innerHTML = `${head()}<ol class="pg-build-steps"><li class="is-run"><span class="spinner"></span><span>Checking syntax in your browser…</span></li></ol>`;
+      const results = [];
+      for (const [path, code] of drafts) {
+        try {
+          results.push({ path, diags: await MV.gowasm.syntax(path.split('/').pop(), code) });
+        } catch (e) {
+          results.push({ path, error: e.message });
+        }
+      }
+      this.building = false;
+      if (!bar.isConnected) return;
+      const ok = results.every((r) => !r.error && !r.diags.length);
+      this.buildResult = { svc, ok, steps: results.filter((r) => r.diags && r.diags.length).map((r) => ({ ok: false, output: r.diags.map((d) => `${r.path.slice(svc.length + 1)}:${d.line}:${d.col}: ${d.message}`).join('\n') })) };
+      bar.innerHTML = `${head(`<span class="badge ${ok ? 'badge-green' : 'badge-err'}">${icon(ok ? 'circle-check' : 'circle-x', '', 12)}${ok ? 'Syntax OK' : 'Syntax errors'}</span>`)}
+        <ol class="pg-build-steps">${results.map((r) => {
+          const bad = r.error || r.diags.length;
+          const out = r.error ? esc(r.error) : r.diags.length ? this.linkOutput(svc, r.diags.map((d) => `${r.path.slice(svc.length + 1)}:${d.line}:${d.col}: ${d.message}`).join('\n')) : '';
+          return `<li class="${bad ? 'is-bad' : 'is-ok'}">${icon(bad ? 'circle-x' : 'circle-check', '', 14)}<span class="mono">${esc(r.path.slice(svc.length + 1))}</span>${out ? `<pre class="pg-build-out">${out}</pre>` : ''}</li>`;
+        }).join('')}</ol>
+        <p class="pg-build-note">${why}</p>${this.patchButton()}`;
+      this.applyBuildMarkers();
+    }
+
+    patchButton() {
+      return `<div class="flex flex-wrap items-center gap-2 mt-2"><button class="btn btn-sm" type="button" data-pg-patch>${icon('download')}Download patch</button><span class="text-[12px] text-mutedc">then <span class="mono">git apply microverse-edits.patch</span> and <span class="mono">make test</span> in <span class="mono">codebase/order-management</span></span></div>`;
+    }
+
+    /** A unified diff of every draft against the original source, for `git apply`. */
+    async downloadPatch() {
+      this.flushDraft && this.flushDraft();
+      const entries = Object.entries(drafts()).sort(([a], [b]) => a.localeCompare(b));
+      if (!entries.length) { toast('No edits to export', { duration: 1600 }); return; }
+      let patch = '';
+      for (const [path, code] of entries) {
+        let original;
+        try { original = await MV.ui.fetchText(codePath(path)); } catch (e) { toast(`Couldn't load ${path}`, { type: 'error', desc: e.message }); return; }
+        patch += unifiedDiff(CB.root + path, original, code);
+      }
+      const url = URL.createObjectURL(new Blob([patch], { type: 'text/x-diff' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'microverse-edits.patch' });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast('Patch downloaded', { type: 'success', desc: `${entries.length} file${entries.length === 1 ? '' : 's'} · apply it from the repository root with git apply.` });
     }
 
     buildHead(svc, n, r) {
@@ -487,6 +597,7 @@ window.MV = window.MV || {};
         if (t.closest('[data-pg-build]')) { this.buildService(); return; }
         if (t.closest('[data-pg-revert]')) { this.revertFile(); return; }
         if (t.closest('[data-pg-build-close]')) { $('#pg-buildbar', v).hidden = true; return; }
+        if (t.closest('[data-pg-patch]')) { this.downloadPatch(); return; }
         const bj = t.closest('[data-build-jump]');
         if (bj) {
           const line = +bj.dataset.line;

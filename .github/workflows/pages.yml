@@ -1,0 +1,67 @@
+# Builds and deploys Microverse to GitHub Pages.
+#
+# One-time setup: repository Settings → Pages → Build and deployment →
+# Source: "GitHub Actions". Every push to main then publishes the site.
+#
+# The in-browser Go engine (assets/go/runner.wasm.gz) is rebuilt from
+# tools/wasm and verified before deploying: exercises must behave the same on
+# the engine and on the real Go toolchain, and the fidelity programs must
+# produce identical output.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: tools/wasm/go.sum
+
+      - name: Check course content
+        run: node tools/check-content.mjs
+
+      - name: Build the in-browser Go engine
+        run: node tools/build-wasm.mjs
+
+      - name: Verify exercises on both engines
+        run: node tools/check-exercises.mjs
+
+      - name: Verify the engine against the Go toolchain
+        run: node tools/check-runner.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

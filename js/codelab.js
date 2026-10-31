@@ -4,10 +4,13 @@
    #/code/:id      workspace: brief, editor, tests, console
    #/code/scratch  free-form program
 
-   Execution is real: the local dev server compiles the code with the Go
-   toolchain on this machine, or forwards it to the official Go Playground
-   (go.dev) when the learner chooses that backend. Nothing here is simulated,
-   and when no execution backend is reachable the page says so plainly.
+   Execution is real, never simulated (see js/runner.js):
+     - in the browser: a Go interpreter compiled to WebAssembly, so the Code
+       Lab works on static hosting such as GitHub Pages;
+     - with the dev server: the Go toolchain on this machine (the real gc
+       compiler), or the official Go Playground at go.dev.
+   When no backend can run (no WebAssembly, or the page opened from a file),
+   the page says so plainly.
    ========================================================================== */
 window.MV = window.MV || {};
 MV.widgets = MV.widgets || {};
@@ -44,23 +47,36 @@ MV.widgets = MV.widgets || {};
   function hasConsent() { try { return localStorage.getItem(CONSENT) === '1'; } catch (_) { return false; } }
   function giveConsent() { try { localStorage.setItem(CONSENT, '1'); } catch (_) { /* storage blocked */ } }
 
+  const BACKENDS = {
+    browser: { icon: 'globe', label: 'In browser', tip: 'A Go interpreter compiled to WebAssembly runs your code in this tab. Nothing is sent anywhere.' },
+    local: { icon: 'cpu', label: 'Local Go', tip: 'Compiled and run by the Go toolchain on this machine (via npm run dev).' },
+    playground: { icon: 'cloud', label: 'Go Playground', tip: 'Compiled and run on go.dev: your code is sent there.' },
+  };
+
   /** One line describing where code will run — shown wherever a Run button is. */
   function backendLabel(inf, backend) {
-    if (!inf || !inf.api) return 'Execution unavailable';
-    return backend === 'local' ? `Local Go · ${(inf.local.version || '').split(' ')[0]}` : 'Go Playground · go.dev';
+    if (!MV.runner.canRun(inf)) return 'Execution unavailable';
+    if (backend === 'local') return `Local Go · ${(inf.local.version || '').split(' ')[0]}`;
+    if (backend === 'playground') return 'Go Playground · go.dev';
+    return 'In browser · Go interpreter (WebAssembly)';
   }
 
-  function noApiHtml(inf) {
+  function noRunHtml(inf) {
     const why = inf.reason === 'file'
-      ? 'This page was opened from a file, so there is no server to compile your code.'
-      : inf.reason === 'remote'
-        ? 'The dev server is not bound to localhost, so it keeps the code-execution API switched off.'
-        : 'This page is served by a static file server, which cannot compile Go.';
-    return `<div class="callout callout-warn">${icon('plug-zap')}<div><div class="callout-title">Running code needs the Microverse dev server</div><div class="callout-body">
+      ? 'This page was opened from a file, and browsers block what the Code Lab needs on file:// pages.'
+      : 'This browser can\'t start the in-browser Go engine: it needs WebAssembly, Web Workers and DecompressionStream (any current Chrome, Edge, Firefox or Safari has them).';
+    return `<div class="callout callout-warn">${icon('plug-zap')}<div><div class="callout-title">Your code can't run here yet</div><div class="callout-body">
       <p>${why} Editing still works and your code is saved in this browser.</p>
-      <p>Start the dev server from the project folder, then reload this page:</p>
-      ${MV.ui.codeBlock('npm run dev', { lang: 'bash', lineNumbers: false })}
-      <p>It runs code with the Go toolchain installed on your machine (<a href="https://go.dev/dl/" target="_blank" rel="noopener">install Go</a>), or sends it to the official Go Playground at go.dev if you choose.</p></div></div></div>`;
+      <p>Serve the site over HTTP (any static host, such as GitHub Pages, works), or run the dev server to use the Go toolchain on your machine:</p>
+      ${MV.ui.codeBlock('npm run dev', { lang: 'bash', lineNumbers: false })}</div></div></div>`;
+  }
+
+  /** "Downloading the Go engine… 3.1 of 8.5 MB" while the in-browser engine loads. */
+  function engineProgress() {
+    const st = MV.gowasm ? MV.gowasm.state() : { status: 'idle' };
+    if (st.status === 'loading') return `Downloading the Go engine (once): ${(st.loaded / 1e6).toFixed(1)} of ${(st.total / 1e6).toFixed(1)} MB…`;
+    if (st.status === 'compiling') return 'Starting the Go engine…';
+    return null;
   }
 
   /* ======================================================================
@@ -73,7 +89,7 @@ MV.widgets = MV.widgets || {};
     let level = query.level || 'All';
     view.innerHTML = `<div class="page">
       <div class="page-head"><div><div class="eyebrow">Practice</div><h1 class="page-title mt-1">Code Lab</h1>
-        <p class="page-sub">Write real Go for the patterns in this course. Each exercise comes with a test suite; press <span class="kbd">Ctrl</span> <span class="kbd">Enter</span> to compile and run it with the Go toolchain on your machine and see which tests pass.</p></div>
+        <p class="page-sub">Write real Go for the patterns in this course. Each exercise comes with a test suite; press <span class="kbd">Ctrl</span> <span class="kbd">Enter</span> to run your code against it and see which tests pass.</p></div>
         <div class="card card-pad flex items-center gap-4" style="padding:14px 18px">${MV.ui.ring(solved / all.length, 44, 4)}<div><div class="stat-value" style="font-size:22px">${solved}/${all.length}</div><div class="stat-sub">solved</div></div></div></div>
       <div class="cl-env card" data-env>${MV.ui.skeleton(1)}</div>
       <a class="card card-link spotlight cl-scratch-card" href="#/code/scratch">
@@ -108,14 +124,15 @@ MV.widgets = MV.widgets || {};
     const inf = await MV.runner.info();
     const env = $('[data-env]', view);
     if (!env) return;
-    if (!inf.api) { env.classList.remove('card'); env.innerHTML = noApiHtml(inf); return; }
+    if (!MV.runner.canRun(inf)) { env.classList.remove('card'); env.innerHTML = noRunHtml(inf); return; }
+    const local = inf.local.available;
     env.innerHTML = `<div class="cl-env-row">
-      <span class="icon-tile sm" style="--c:var(--green)">${icon('cpu')}</span>
-      <div class="min-w-0 flex-1"><div class="text-[13.5px] font-semibold" style="color:var(--fg)">${inf.local.available ? `Your code runs on this machine with <span class="mono">${esc(inf.local.version)}</span>` : 'Go is not installed on this machine'}</div>
-        <div class="text-[12.5px] text-fg2">${inf.local.available
-          ? 'Real compilation and execution: each run builds your code in a temporary folder, with a 10-second limit and no network access. You can also switch an exercise to the Go Playground.'
-          : 'Exercises can run on the official Go Playground (go.dev) instead: your code is sent there to compile. Install Go to run everything locally.'}</div></div>
-      <span class="badge ${inf.local.available ? 'badge-green' : 'badge-warn'}">${icon(inf.local.available ? 'circle-check' : 'cloud')}${inf.local.available ? 'Real execution' : 'Playground only'}</span></div>`;
+      <span class="icon-tile sm" style="--c:var(--green)">${icon(local ? 'cpu' : 'globe')}</span>
+      <div class="min-w-0 flex-1"><div class="text-[13.5px] font-semibold" style="color:var(--fg)">${local ? `Your code runs on this machine with <span class="mono">${esc(inf.local.version)}</span>` : 'Your code runs right here in your browser'}</div>
+        <div class="text-[12.5px] text-fg2">${local
+          ? 'Each run is compiled by the real Go toolchain in a temporary folder, with a time limit and no network access. You can also switch an exercise to the in-browser engine or the Go Playground.'
+          : 'A Go interpreter compiled to WebAssembly runs your code in this tab: no server, and nothing is sent anywhere. It downloads once (about 8.5 MB) the first time you press Run.'}</div></div>
+      <span class="badge badge-green">${icon('circle-check')}Real execution</span></div>`;
   }
 
   /* ======================================================================
@@ -129,7 +146,7 @@ MV.widgets = MV.widgets || {};
       this.files = files;
       this.inf = inf;
       this.nav = nav;
-      this.backend = inf.api ? MV.runner.preferredBackend(inf) : 'local';
+      this.backend = MV.runner.preferredBackend(inf);
       this.tests = this.scratch ? [] : MV.runner.testNames(files.tests).map((name) => ({ name, state: 'idle' }));
       this.fileTab = 'exercise.go';
       this.resTab = this.scratch ? 'output' : 'tests';
@@ -155,7 +172,8 @@ MV.widgets = MV.widgets || {};
     render(code) {
       const ex = this.ex;
       const idx = exercises().indexOf(ex);
-      const runDisabled = !this.inf.api;
+      const runDisabled = !MV.runner.canRun(this.inf);
+      const choices = Object.keys(BACKENDS).filter((b) => this.inf[b] && this.inf[b].available);
       this.view.innerHTML = `<div class="cl${this.scratch ? ' is-scratch' : ''}">
         <div class="cl-bar">
           <a class="btn btn-ghost btn-sm" href="#/code">${icon('arrow-left')}<span class="cl-hide-sm">Code Lab</span></a>
@@ -165,9 +183,9 @@ MV.widgets = MV.widgets || {};
             ${this.scratch ? '' : `<span class="badge ${status(ex.id).cls}" data-status>${icon(status(ex.id).ic)}${esc(status(ex.id).label)}</span>`}
           </div>
           <div class="cl-actions">
-            ${this.inf.api ? `<div class="segmented cl-backend" role="group" aria-label="Where your code runs">
-              <button type="button" data-backend="local" aria-pressed="${this.backend === 'local'}"${this.inf.local.available ? '' : ' disabled title="Go is not installed on this machine"'}>${icon('cpu')}<span>Local Go</span></button>
-              <button type="button" data-backend="playground" aria-pressed="${this.backend === 'playground'}">${icon('cloud')}<span>Go Playground</span></button></div>` : ''}
+            ${choices.length > 1 ? `<div class="segmented cl-backend" role="group" aria-label="Where your code runs">
+              ${choices.map((b) => `<button type="button" data-backend="${b}" aria-pressed="${this.backend === b}" data-tip="${esc(BACKENDS[b].tip)}">${icon(BACKENDS[b].icon)}<span>${BACKENDS[b].label}</span></button>`).join('')}</div>`
+              : choices.length === 1 ? `<span class="badge badge-green" data-tip="${esc(BACKENDS[choices[0]].tip)}">${icon(BACKENDS[choices[0]].icon)}${BACKENDS[choices[0]].label}</span>` : ''}
             <button class="btn btn-sm btn-ghost" type="button" data-fmt${runDisabled ? ' disabled' : ''} data-tip="Format with gofmt (Shift+Alt+F)">${icon('wand-sparkles')}<span class="cl-hide-sm">Format</span></button>
             <button class="btn btn-sm btn-ghost" type="button" data-copy-code data-tip="Copy your code">${icon('copy')}<span class="cl-hide-sm">Copy</span></button>
             <button class="btn btn-sm btn-ghost" type="button" data-reset data-tip="${this.scratch ? 'Restore the example' : 'Restore the starter code'}">${icon('rotate-ccw')}<span class="cl-hide-sm">Reset</span></button>
@@ -181,7 +199,7 @@ MV.widgets = MV.widgets || {};
               <div class="pg-tabs scroll-thin" role="tablist" aria-label="Files" data-ftabs>${this.tabsHtml()}</div>
               <div class="cl-ed-host" data-ed-main></div>
               <div class="cl-ed-host" data-ed-view hidden></div>
-              <div class="cl-status"><span data-caret>Ln 1, Col 1</span><span data-saved>${icon('check', '', 12)}Saved in this browser</span><span class="ml-auto" data-backend-label>${icon(this.inf.api ? 'circle-check' : 'circle-off', '', 12)}${esc(backendLabel(this.inf, this.backend))}</span></div>
+              <div class="cl-status"><span data-caret>Ln 1, Col 1</span><span data-saved>${icon('check', '', 12)}Saved in this browser</span><span class="ml-auto" data-backend-label>${icon(MV.runner.canRun(this.inf) ? 'circle-check' : 'circle-off', '', 12)}${esc(backendLabel(this.inf, this.backend))}</span></div>
             </div>
             <div class="cl-split" role="separator" aria-orientation="horizontal" aria-label="Resize results panel" tabindex="0"></div>
             <div class="cl-results">
@@ -206,6 +224,10 @@ MV.widgets = MV.widgets || {};
       });
       this.viewer = null;
       this.bind();
+      if (MV.gowasm && this.inf.browser.available) {
+        this.offEngine = MV.gowasm.onState(() => { if (this.running) this.renderResults(); });
+        if (this.backend === 'browser') setTimeout(() => MV.gowasm.load().catch(() => {}), 600);
+      }
       this.renderResults();
       if (window.innerWidth > 1060) setTimeout(() => this.editor.focus(), 60);
     }
@@ -281,6 +303,7 @@ MV.widgets = MV.widgets || {};
         store.saveExerciseCode(this.ex.id, this.editor.value);
         this.editor.destroy();
         this.viewer && this.viewer.destroy();
+        this.offEngine && this.offEngine();
       });
     }
 
@@ -366,17 +389,17 @@ MV.widgets = MV.widgets || {};
     }
 
     metaHtml(r) {
-      const parts = [r.backend === 'local' ? `local · ${esc((r.goVersion || '').split(' ')[0])}` : 'go.dev playground'];
+      const parts = [r.backend === 'local' ? `local · ${esc((r.goVersion || '').split(' ')[0])}` : r.backend === 'browser' ? `in browser · ${esc(r.goVersion || 'Go interpreter')}` : 'go.dev playground'];
       if (r.buildMs) parts.push(`build ${(r.buildMs / 1000).toFixed(1)}s`);
       if (r.phase === 'run' && r.runMs) parts.push(`run ${(r.runMs / 1000).toFixed(2)}s`);
       return `${icon('cpu', '', 12)}${parts.join(' · ')}`;
     }
 
     testsHtml() {
-      if (!this.inf.api && !this.last) return noApiHtml(this.inf);
+      if (!MV.runner.canRun(this.inf) && !this.last) return noRunHtml(this.inf);
       const r = this.last;
       let banner = '';
-      if (this.running) banner = `<div class="cl-banner is-run"><span class="spinner"></span>Compiling and running ${this.tests.length} tests…</div>`;
+      if (this.running) banner = `<div class="cl-banner is-run"><span class="spinner"></span>${esc(engineProgress() || `Compiling and running ${this.tests.length} tests…`)}</div>`;
       else if (r && r.error) banner = `<div class="cl-banner is-bad">${icon('octagon-alert')}<span>${esc(r.error)}</span></div>`;
       else if (r && r.phase === 'build') banner = `<div class="cl-banner is-bad">${icon('octagon-alert')}<span>Build failed. Fix the compile errors, then run again. <button type="button" class="link-btn" data-rtab-jump="output">Show errors</button></span></div>`;
       else if (r && this.allPass) {
@@ -393,14 +416,14 @@ MV.widgets = MV.widgets || {};
     }
 
     outputHtml() {
-      if (!this.inf.api && !this.last) return noApiHtml(this.inf);
-      if (this.running) return `<div class="cl-banner is-run"><span class="spinner"></span>${this.backend === 'local' ? 'Building with your local Go toolchain…' : 'Sending to go.dev…'}</div>`;
+      if (!MV.runner.canRun(this.inf) && !this.last) return noRunHtml(this.inf);
+      if (this.running) return `<div class="cl-banner is-run"><span class="spinner"></span>${esc(engineProgress() || (this.backend === 'local' ? 'Building with your local Go toolchain…' : this.backend === 'browser' ? 'Running in your browser…' : 'Sending to go.dev…'))}</div>`;
       const r = this.last;
       if (!r) return `<div class="cl-console cl-muted">${this.scratch ? 'Press Run (Ctrl+Enter) to compile and run main.go.' : 'Output from your code (fmt.Println and friends) and compiler errors appear here.'}</div>`;
       if (r.error) return `<div class="cl-banner is-bad">${icon('octagon-alert')}<span>${esc(r.error)}</span></div>`;
       const linkify = (text) => esc(text).replace(/((?:\.\/)?(exercise|main)\.go):(\d+)(?::(\d+))?/g, (m, f, base, l, c) =>
         (base === 'exercise' || this.scratch) ? `<button type="button" class="cl-jump" data-jump="${l}" data-col="${c || 1}">${m}</button>` : m);
-      const cmd = r.backend === 'local' ? '$ go build && ./program' : '$ go.dev/play';
+      const cmd = r.backend === 'local' ? '$ go build && ./program' : r.backend === 'browser' ? '$ go run .   # in-browser Go interpreter' : '$ go.dev/play';
       const out = this.scratch ? r.stdout : MV.runner.userOutput(r.stdout);
       let html = `<div class="cl-console"><div class="cl-muted">${esc(cmd)}</div>`;
       if (r.phase === 'build') html += `<div class="cl-err">${linkify(r.stderr)}</div>`;
@@ -424,7 +447,7 @@ MV.widgets = MV.widgets || {};
 
     async run() {
       if (this.running) return;
-      if (!this.inf.api) { this.setResTab(this.scratch ? 'output' : 'tests'); toast('Running code needs the dev server', { type: 'warn', desc: 'Start it with npm run dev, then reload.' }); return; }
+      if (!MV.runner.canRun(this.inf)) { this.setResTab(this.scratch ? 'output' : 'tests'); toast('Code can\'t run in this browser', { type: 'warn', desc: 'See the note in the results panel.' }); return; }
       if (this.backend === 'playground' && !hasConsent()) {
         const ok = await MV.ui.confirm({ title: 'Send your code to the Go Playground?', message: 'The Go Playground backend compiles and runs your code on go.dev, a service run by the Go team at Google. Your code (and the exercise tests) will be sent there. Choose Local Go instead to keep everything on this machine.', confirmText: 'Send to go.dev' });
         if (!ok) return;
@@ -484,7 +507,7 @@ MV.widgets = MV.widgets || {};
     }
 
     async format() {
-      if (!this.inf.api) { toast('Formatting needs the dev server', { type: 'warn' }); return; }
+      if (!MV.runner.canRun(this.inf)) { toast('Formatting isn\'t available in this browser', { type: 'warn' }); return; }
       if (this.fileTab !== 'exercise.go') this.showFile('exercise.go');
       try {
         const r = await MV.runner.fmt(this.editor.value, this.backend);

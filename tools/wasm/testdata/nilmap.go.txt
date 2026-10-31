@@ -1,0 +1,18 @@
+package main
+
+import "fmt"
+
+func main() {
+	var m map[string]int
+	fmt.Println(m["missing"])
+	func() {
+		defer func() { fmt.Println("recovered:", recover()) }()
+		m["x"] = 1
+	}()
+	var p *struct{ X int }
+	func() {
+		defer func() { fmt.Println("recovered:", recover() != nil) }()
+		fmt.Println(p.X)
+	}()
+	panic(fmt.Sprintf("custom %d", 42))
+}
