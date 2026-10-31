@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,10 +15,14 @@ type Order struct {
 	Total float64
 }
 
-// fetchPrice pretends to call a pricing service that takes a while.
+// fetchPrice pretends to call a pricing service. IDs ending in "_slow" hang.
 func fetchPrice(ctx context.Context, id string) (float64, error) {
+	delay := time.Duration(len(id)) * 10 * time.Millisecond
+	if strings.HasSuffix(id, "_slow") {
+		delay = 2 * time.Second
+	}
 	select {
-	case <-time.After(time.Duration(len(id)*15) * time.Millisecond):
+	case <-time.After(delay):
 		return float64(len(id)) * 9.99, nil
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -25,7 +30,7 @@ func fetchPrice(ctx context.Context, id string) (float64, error) {
 }
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	ids := []string{"ord_1", "ord_22", "ord_333", "ord_4444_slow"}

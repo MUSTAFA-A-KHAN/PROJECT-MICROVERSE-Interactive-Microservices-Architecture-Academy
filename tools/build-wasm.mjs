@@ -14,7 +14,7 @@
  * (see below); the module cache and this repository are never modified.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, cpSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, cpSync, chmodSync, readdirSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { join, dirname, resolve } from 'node:path';
@@ -125,14 +125,20 @@ const PATCHES = [{
  * (use it with `go build -modfile`).
  */
 export function patchedModfile() {
-  const dir = go(['list', '-m', '-f', '{{.Dir}}', 'github.com/traefik/yaegi']);
+  // `go mod download` fetches the module if this machine (e.g. a fresh CI
+  // runner) doesn't have it yet; `go list -m` would just report an empty Dir.
+  const { Dir: dir, Error: err } = JSON.parse(go(['mod', 'download', '-json', 'github.com/traefik/yaegi']));
+  if (!dir) { console.error(`Couldn't download github.com/traefik/yaegi: ${err || 'no module directory'}`); process.exit(1); }
   const tmp = join(tmpdir(), 'microverse-yaegi');
   const copy = join(tmp, 'yaegi');
+  if (existsSync(tmp)) makeWritable(tmp);
   rmSync(tmp, { recursive: true, force: true });
   cpSync(dir, copy, { recursive: true, filter: (src) => !/[\\/](_test|example|cmd|\.github)([\\/]|$)/.test(src.slice(dir.length)) });
+  // The module cache is read-only (on Linux and macOS the copy keeps those
+  // modes); make the copy writable so it can be patched and later removed.
+  makeWritable(copy);
   for (const p of PATCHES) {
     const target = join(copy, p.file);
-    chmodSync(target, 0o644);
     const src = readFileSync(target, 'utf8').replace(/\r\n/g, '\n');
     if (src.split(p.find).length !== 2) { console.error(`Yaegi patch no longer applies to ${p.file} (expected exactly one match) — check the Yaegi version.`); process.exit(1); }
     writeFileSync(target, src.replace(p.find, p.replace));
@@ -141,6 +147,15 @@ export function patchedModfile() {
   writeFileSync(join(tmp, 'go.mod'), mod);
   copyFileSync(join(wasmDir, 'go.sum'), join(tmp, 'go.sum'));
   return join(tmp, 'go.mod');
+}
+
+function makeWritable(dir) {
+  chmodSync(dir, 0o755);
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) makeWritable(full);
+    else chmodSync(full, 0o644);
+  }
 }
 
 function build() {
